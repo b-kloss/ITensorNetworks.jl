@@ -42,6 +42,7 @@ function alternating_update(
   maxdim, mindim, cutoff, noise = process_sweeps(nsweeps; kwargs...)
 
   step_observer = get(kwargs, :step_observer!, nothing)
+  expand = get(kwargs, :expand, false)
 
   psi = copy(psi0)
 
@@ -81,6 +82,10 @@ function alternating_update(
     end
 
     current_time += time_step
+
+    if expand
+      psi = subspace_expansion_sweep!(psi, PH; maxdim = 20, cutoff = 10-10)
+    end
 
     update!(step_observer; psi, sweep=sw, outputlevel, current_time)
 
