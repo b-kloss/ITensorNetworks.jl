@@ -11,7 +11,7 @@
 """
 expand subspace (2-site like) in a sweep 
 """
-function subspace_expansion_sweep!(
+function subspace_expansion_full_sweep!(
   ψ::AbstractTTN{V}, PH::AbstractProjTTN{V}; maxdim, cutoff, atol=1e-10, kwargs...
 ) where {V}
 
@@ -41,7 +41,7 @@ function subspace_expansion_sweep!(
       ψ = orthogonalize(ψ, b[1])
       PH = position(PH, ψ, [b[1]])
 
-      subspace_expansion!(
+      subspace_expansion_full!(
         ψ, PH, b; maxdim, cutoff=cutoff, atol=atol, kwargs...
       )
 
@@ -50,17 +50,15 @@ function subspace_expansion_sweep!(
   return ψ
 end
 
-function _subspace_expand_core(
-  centerwf::Vector{ITensor}, env, NL, NR; maxdim, cutoff, kwargs...
+function _subspace_expand_full_core(
+  centerwf::Vector{ITensor}, PH, Nn1; maxdim, cutoff, kwargs...
 )
-  ϕ = ITensor(1.0)
-  for atensor in centerwf
-    ϕ *= atensor
-  end
-  return _subspace_expand_core(ϕ, env, NL, NR; maxdim, cutoff, kwargs...)
+  ϕ = reduce(*, centerwf; init = ITensor(1.))
+  return _subspace_expand_full_core(ϕ, PH, Nn1; maxdim, cutoff, kwargs...)
 end
 
-function _subspace_expand_core(ϕ::ITensor, env, NL, NR; maxdim, cutoff, kwargs...)
+function _subspace_expand_full_core(ϕ::Vector{ITensor}, PHn1, PHn2, Nn1; maxdim, cutoff, kwargs...)
+
   ϕH = noprime(env(ϕ))   #add noprime?
   ϕH = NL * ϕH * NR
   if norm(ϕH) == 0.0
@@ -84,7 +82,7 @@ function _subspace_expand_core(ϕ::ITensor, env, NL, NR; maxdim, cutoff, kwargs.
   return NL, S, NR, true
 end
 
-function subspace_expansion!(
+function subspace_expansion_full!(
   ψ::ITensorNetworks.AbstractTTN{Vert},
   PH,
   b::Vector{Vert};
@@ -106,70 +104,98 @@ function subspace_expansion!(
   
   n1, n2 = b
   cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
+  g = underlying_graph(PH)
 
   # move orthogonality center to bond
   # and check whether there are vanishing contributions to the wavefunctions
   # truncate accordingly
   # at the cost of unitarity but introducing flexibility of redistributing bond dimensions among QN sectors)
+  #
+  ### use ITensorNetworks.svd function??
   U, S, V = svd(
     ψ[n1], uniqueinds(ψ[n1], ψ[n2]); maxdim=maxdim, cutoff=cutoff_compress, kwargs...
   )
   ϕ_1 = U
   ϕ_2 = ψ[n2] * V
-  old_linkdim = dim(commonind(U, S))
   bondtensor = S
+  old_linkdim = dim(commonind(U, S))
+  # bondtensor = S
 
   # don't expand if we are already at maxdim
-  if old_linkdim >= maxdim
-    # println("not expanding")
-    return nothing
+  old_linkdim >= maxdim && return nothing
+  PH = position(PH, ψ, [n1])
+
+  ## brute-force for now, need a better way to do that
+  PHn1 = map(e -> PH.environments[NamedEdge(e)], [v => n1 for v in neighbors(g, n1) if v != n2])
+  PHn1 = reduce(*, PHn1, init=ϕ_1*bondtensor*PH.H[n1])
+  if n2 > n1
+    PHn2 = mapreduce(*, filter(x->x>n2, vertices(ψ)); init=ϕ_2*PH.H[n2]) do v
+      return ψ[v]*PH.H[v]
+    end
+  else
+    PHn2 = mapreduce(*, filter(x->x<n2, vertices(ψ)); init=ϕ_2*PH.H[n2]) do v
+      return ψ[v]*PH.H[v]
+    end
   end
-  PH = position(PH, ψ, [n1,n2])
+
 
   # orthogonalize(ψ,n1)
-  linkind_l = commonind(ϕ_1, bondtensor)
-  linkind_r = commonind(ϕ_2, bondtensor)
+  linkind_l = commonind(ϕ_1, S)
+  # linkind_r = commonind(ϕ_2, bondtensor)
 
   # compute nullspace to the left and right 
-  NL = nullspace(ϕ_1, linkind_l; atol=atol)
-  NR = nullspace(ϕ_2, linkind_r; atol=atol)
+  Nn1 = nullspace(ϕ_1, linkind_l; atol=atol)
+  # NR = nullspace(ϕ_2, linkind_r; atol=atol)
 
   # if nullspace is empty (happen's for product states with QNs)
-  if norm(NL) == 0.0 || norm(NR) == 0.0
-    return bondtensor
-  end
+  norm(Nn1) == 0.0 && return bondtensor
 
   # form 2-site wavefunction
-  ϕ = ϕ_1 * bondtensor * ϕ_2
+  ϕ = [ϕ_1, bondtensor, ϕ_2]
+
+  ϕH = noprime(PHn1)*Nn1*PHn2
+  
+  # success || println("Subspace expansion not successful. This may indicate that 2-site TDVP also fails for the given state and Hamiltonian.")
+  norm(ϕH) == 0. && return nothing
 
   # get subspace expansion
-  newL, S, newR, success = _subspace_expand_core(
-    ϕ, PH, NL, NR, ; maxdim=maxdim - old_linkdim, cutoff, kwargs...
+  
+  # newL, S, newR, success = _subspace_expand_full_core(
+  #   ϕ, PHn1, PHn2, Nn1; maxdim=maxdim - old_linkdim, cutoff, kwargs...
+  # )
+  
+  U, S, V = svd(
+    ϕH,
+    commoninds(ϕH, Nn1);
+    maxdim,
+    cutoff,
+    use_relative_cutoff=false,
+    use_absolute_cutoff=true,
+    kwargs...,
   )
 
-  # success || println("Subspace expansion not successful. This may indicate that 2-site TDVP also fails for the given state and Hamiltonian.")
-  success || return nothing
+  newL = Nn1*dag(U)
 
   # expand current site tensors
   ALⁿ¹, newl = ITensors.directsum(
     ϕ_1 => uniqueinds(ϕ_1, newL), dag(newL) => uniqueinds(newL, ϕ_1); tags=(tags(commonind(ψ[n1],ψ[n2])),)
   )
-  ARⁿ², newr = ITensors.directsum(
-    ϕ_2 => uniqueinds(ϕ_2, newR), dag(newR) => uniqueinds(newR, ϕ_2); tags=(tags(commonind(ψ[n1],ψ[n2])),)
-  )
+  # ARⁿ², newr = ITensors.directsum(
+  #   ϕ_2 => uniqueinds(ϕ_2, newR), dag(newR) => uniqueinds(newR, ϕ_2); tags=(tags(commonind(ψ[n1],ψ[n2])),)
+  # )
 
   # Some checks
-  @assert (dim(commonind(newL, S)) + old_linkdim) <= maxdim
-  @assert dim(commonind(newL, S)) == dim(commonind(newR, S))
-  @assert(dim(uniqueind(ϕ_1, newL)) + dim(uniqueind(newL, ϕ_1)) == dim(newl))
-  @assert(dim(uniqueind(ϕ_2, newR)) + dim(uniqueind(newR, ϕ_2)) == dim(newr))
-  @assert (old_linkdim + dim(commonind(newL, S))) <= maxdim
-  @assert (old_linkdim + dim(commonind(newR, S))) <= maxdim
-  @assert dim(newl) <= maxdim
-  @assert dim(newr) <= maxdim
+  # @assert (dim(commonind(newL, S)) + old_linkdim) <= maxdim
+  # @assert dim(commonind(newL, S)) == dim(commonind(newR, S))
+  # @assert(dim(uniqueind(ϕ_1, newL)) + dim(uniqueind(newL, ϕ_1)) == dim(newl))
+  # @assert(dim(uniqueind(ϕ_2, newR)) + dim(uniqueind(newR, ϕ_2)) == dim(newr))
+  # @assert (old_linkdim + dim(commonind(newL, S))) <= maxdim
+  # @assert (old_linkdim + dim(commonind(newR, S))) <= maxdim
+  # @assert dim(newl) <= maxdim
+  # @assert dim(newr) <= maxdim
 
   # zero-pad bond-tensor (the orthogonality center)
-  C = ITensor(dag(newl)..., dag(newr)...)
+  C = ITensor(dag(newl)..., commonind(bondtensor, ϕ_2))
   ψC = bondtensor
   for I in eachindex(ψC)
     v = ψC[I]
@@ -177,9 +203,15 @@ function subspace_expansion!(
       C[I] = ψC[I]
     end
   end
+  # @show inds(C)
+  # @show inds(ψ[n1])
+  # @show inds(ψ[n2])
+  # @show inds(ALⁿ¹)
 
-  ψ[n2] = ARⁿ²
-  ψ[n1] = noprime(ALⁿ¹ * C)
+  ψ[n1] = noprime(ALⁿ¹)
+  ψ[n2] = ϕ_2 * C
+  # @show inds(ψ[n1])
+  # @show inds(ψ[n2])
 
   return nothing
 end

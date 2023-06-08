@@ -83,8 +83,12 @@ function alternating_update(
 
     current_time += time_step
 
-    if expand
-      psi = subspace_expansion_sweep!(psi, PH; maxdim = 20, cutoff = 10-10)
+    if expand == "2-site"
+      psi = subspace_expansion_sweep!(psi, PH; maxdim = 20, cutoff = 1e-8)
+    elseif expand == "full"
+      psi = subspace_expansion_full_sweep!(psi, PH; maxdim = 20, cutoff = 1e-8)
+    elseif expand == "krylov"
+      psi = subspace_expansion_krylov_sweep!(psi, PH; maxdim = 20, cutoff = 1e-8)
     end
 
     update!(step_observer; psi, sweep=sw, outputlevel, current_time)
@@ -105,6 +109,14 @@ function alternating_update(
     end
     isdone && break
   end
+  # @show psi[1]
+  # @show psi[2]
+  # PH = position(PH, psi, [2,3])
+  # @show keys(PH.environments)
+  # PH = position(PH, psi, [2])
+  # @show keys(PH.environments)
+  # PH = position(PH, psi, [1])
+  # @show keys(PH.environments)
   return psi
 end
 

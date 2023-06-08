@@ -107,6 +107,7 @@ function update_sweep(
       update!(
         observer;
         psi,
+        PH,
         bond=minimum(pos(sweep_step)),
         sweep=sw,
         half_sweep=isforward(direction) ? 1 : 2,

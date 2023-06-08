@@ -7,13 +7,28 @@
 # 
 
 # linear ordering of vertices in tree graph relative to chosen root
+#
+# function ITensors.:site(o::ITensors.Op) 
+#   s = only(o.sites)
+#   (typeof(s) == Int) && (s = Tuple(s))
+#   return s
+# end
+#
+# function ITensors.:sites(o::ITensors.Op) 
+#   s = o.sites
+#   # (typeof(s) == Int) && (s = Tuple(s))
+#   return s
+# end
+#
 function find_index_in_tree(site, g::AbstractGraph, root_vertex)
   ordering = post_order_dfs_vertices(g, root_vertex)
   return findfirst(x -> x == site, ordering)
 end
 
 function find_index_in_tree(o::Op, g::AbstractGraph, root_vertex)
-  return find_index_in_tree(ITensors.site(o), g::AbstractGraph, root_vertex)
+  s = ITensors.site(o)
+  # (typeof(s) == Int) && (s = Tuple(s))
+  return find_index_in_tree(s, g::AbstractGraph, root_vertex)
 end
 
 # determine 'support' of product operator on tree graph
@@ -473,15 +488,16 @@ function sorteachterm(os::OpSum, sites::IndsNetwork{V,<:Index}, root_vertex::V) 
     parity = +1
     for n in Nt:-1:1
       currsite = ITensors.site(t[n])
+      # (typeof(currsite) == Int) && (currsite = Tuple(currsite))
       fermionic = has_fermion_string(
-        ITensors.which_op(t[n]), only(sites[ITensors.site(t[n])])
+        ITensors.which_op(t[n]), only(sites[currsite])
       )
       if !ITensors.using_auto_fermion() && (parity == -1) && (currsite < prevsite)
         error("No verified fermion support for automatic TTN constructor!") # no verified support, just throw error
         # Put local piece of Jordan-Wigner string emanating
         # from fermionic operators to the right
         # (Remaining F operators will be put in by svdMPO)
-        terms(t)[n] = Op("$(ITensors.which_op(t[n])) * F", only(ITensors.site(t[n])))
+        terms(t)[n] = Op("$(ITensors.which_op(t[n])) * F", only(currsite))
       end
       prevsite = currsite
 
