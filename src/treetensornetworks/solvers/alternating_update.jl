@@ -40,7 +40,6 @@ function alternating_update(
   kwargs...,
 )
   maxdim, mindim, cutoff, noise = process_sweeps(nsweeps; kwargs...)
-
   step_observer = get(kwargs, :step_observer!, nothing)
   expand = get(kwargs, :expand, false)
 
@@ -83,12 +82,21 @@ function alternating_update(
 
     current_time += time_step
 
+    D = maxdim[sw]
+    # @time begin
     if expand == "2-site"
-      psi = subspace_expansion_sweep!(psi, PH; maxdim = 20, cutoff = 1e-8)
+      psi = subspace_expansion_sweep!(psi, PH; maxdim = D, cutoff = 1e-8)
     elseif expand == "full"
-      psi = subspace_expansion_full_sweep!(psi, PH; maxdim = 20, cutoff = 1e-8)
+      PH2 = get(kwargs, :PH_sq, nothing)
+      isnothing(PH2) && error("PH_sq not implemented")
+      psi = subspace_expansion_full_sweep!(psi, PH, PH2; maxdim = D, cutoff = 1e-8)
+    elseif expand == "full2"
+      PH2 = get(kwargs, :PH_sq, nothing)
+      isnothing(PH2) && error("PH_sq not implemented")
+      psi = subspace_expansion_full2_sweep!(psi, PH, PH2; maxdim = D, cutoff = 1e-8)
     elseif expand == "krylov"
-      psi = subspace_expansion_krylov_sweep!(psi, PH; maxdim = 20, cutoff = 1e-8)
+      psi = subspace_expansion_krylov_sweep!(psi, PH; maxdim = D, cutoff = 1e-8)
+    # end
     end
 
     update!(step_observer; psi, sweep=sw, outputlevel, current_time)
@@ -109,14 +117,6 @@ function alternating_update(
     end
     isdone && break
   end
-  # @show psi[1]
-  # @show psi[2]
-  # PH = position(PH, psi, [2,3])
-  # @show keys(PH.environments)
-  # PH = position(PH, psi, [2])
-  # @show keys(PH.environments)
-  # PH = position(PH, psi, [1])
-  # @show keys(PH.environments)
   return psi
 end
 
@@ -127,7 +127,12 @@ function alternating_update(solver, H::AbstractTTN, psi0::AbstractTTN; kwargs...
   # and minimize permutations
   H = ITensors.permute(H, (linkind, siteinds, linkind))
   PH = ProjTTN(H)
-  return alternating_update(solver, PH, psi0; kwargs...)
+
+  # build H^2 out of H
+  new_vertex_data = replaceprime.(map(*, vertex_data(data_graph(H)), prime.(vertex_data(data_graph(H)))), 2 => 1)
+  H2 = TTN(ITensorNetwork(DataGraph(underlying_graph(H), new_vertex_data, edge_data(data_graph(H)))), H.ortho_center)
+  PH2 = ProjTTN(H2)
+  return alternating_update(solver, PH, psi0; kwargs..., PH_sq=PH2)
 end
 
 """

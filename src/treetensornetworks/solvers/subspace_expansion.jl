@@ -2,7 +2,6 @@
 ########################## TO DO #############################
 ##############################################################
 # make checks for case with quantum numbers
-#     do this for dmrg routine to compare energies, since expect seems to be broken for QN's
 # make checks for general TTN case
 # implement global Krylov method 
 ##############################################################
@@ -37,6 +36,7 @@ function subspace_expansion_sweep!(
 
       b = pos(sweep_step)
       ha = time_direction(sweep_step)
+
       ##TODO: figure out whether these calls should be here or inside subspace expansion, currently we do both?
       ψ = orthogonalize(ψ, b[1])
       PH = position(PH, ψ, [b[1]])
@@ -44,7 +44,6 @@ function subspace_expansion_sweep!(
       subspace_expansion!(
         ψ, PH, b; maxdim, cutoff=cutoff, atol=atol, kwargs...
       )
-
     end
   end
   return ψ

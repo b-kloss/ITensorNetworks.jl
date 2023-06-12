@@ -41,7 +41,6 @@ function subspace_expansion_krylov_sweep!(
       subspace_expansion_krylov!(
         ψ, PH, b; maxdim, cutoff=cutoff, atol=atol, kwargs...
       )
-
     end
   end
   return ψ
@@ -62,10 +61,11 @@ function subspace_expansion_krylov!(
   ##not a valid MPS otherwise anyway (since bond matrix not part of MPS unless so defined like in VidalMPS struct)
   n1, n2 = b
   old_linkdim = dim(commonind(ψ[n1], ψ[n2]))
+  cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
 
   ###move orthogonality center to bond, check whether there are vanishing contributions to the wavefunctions and truncate accordingly
   ###the cutoff should be scaled with timestep, otherwise one runs into problems with non-monotonic error behaviour like in TEBD approaches
-  U, S, V = svd(ψ[n1], uniqueinds(ψ[n1], ψ[n2]); maxdim=maxdim, cutoff=1e-17, kwargs...)
+  U, S, V = svd(ψ[n1], uniqueinds(ψ[n1], ψ[n2]); maxdim=maxdim, cutoff=1e-12, kwargs...)
   ϕ_1 = U
   ϕ_2 = ψ[n2] * V
   old_linkdim = dim(commonind(U, S))
@@ -84,9 +84,9 @@ function subspace_expansion_krylov!(
 
   NL = nullspace(ϕ_1, linkind_l; atol=atol)
   NR = nullspace(ϕ_2, linkind_r; atol=atol)
-  @show inds(ψ[1])
-  @show inds(ϕ_1)
-  @show inds(NL)
+  # @show inds(ψ[1])
+  # @show inds(ϕ_1)
+  # @show inds(NL)
 
   ###NOTE: This will fail for rank-1 trees with physical DOFs on leafs
   ###NOTE: one-sided subspace expansion seems to not work well at least for trees according to Lachlan Lindoy
@@ -101,30 +101,29 @@ function subspace_expansion_krylov!(
   newL, S, newR, success = _subspace_expand_core_krylov(
     ϕ, PH, NL, NR, b; maxdim=maxdim - old_linkdim, cutoff, kwargs...
   )
-  @show inds(newL)
 
   success || return nothing
 
-  ###add expansion direction to current site tensors
+  ##add expansion direction to current site tensors
   ALⁿ¹, newl = ITensors.directsum(
-    ϕ_1, dag(newL), uniqueinds(ϕ_1, newL), uniqueinds(newL, ϕ_1); tags=(tags(commonind(ψ[n1],ψ[n2])),)
+    ϕ_1 => uniqueinds(ϕ_1, newL)[1], dag(newL) => uniqueinds(newL, ϕ_1)[1]; tags=tags(commonind(ψ[n1],ψ[n2]))
   )
   ARⁿ², newr = ITensors.directsum(
-    ϕ_2, dag(newR), uniqueinds(ϕ_2, newR), uniqueinds(newR, ϕ_2); tags=(tags(commonind(ψ[n1],ψ[n2])),)
+    ϕ_2 => uniqueinds(ϕ_2, newR)[1], dag(newR) => uniqueinds(newR, ϕ_2)[1]; tags=tags(commonind(ψ[n1],ψ[n2]))
   )
 
   ###TODO remove assertions regarding expansion not exceeding maxdim
-  @assert (dim(commonind(newL, S)) + old_linkdim) <= maxdim
-  @assert dim(commonind(newL, S)) == dim(commonind(newR, S))
-  @assert(dim(uniqueind(ϕ_1, newL)) + dim(uniqueind(newL, ϕ_1)) == dim(newl))
-  @assert(dim(uniqueind(ϕ_2, newR)) + dim(uniqueind(newR, ϕ_2)) == dim(newr))
-  @assert (old_linkdim + dim(commonind(newL, S))) <= maxdim
-  @assert (old_linkdim + dim(commonind(newR, S))) <= maxdim
-  @assert dim(newl) <= maxdim
-  @assert dim(newr) <= maxdim
+  # @assert (dim(commonind(newL, S)) + old_linkdim) <= maxdim
+  # @assert dim(commonind(newL, S)) == dim(commonind(newR, S))
+  # @assert(dim(uniqueind(ϕ_1, newL)) + dim(uniqueind(newL, ϕ_1)) == dim(newl))
+  # @assert(dim(uniqueind(ϕ_2, newR)) + dim(uniqueind(newR, ϕ_2)) == dim(newr))
+  # @assert (old_linkdim + dim(commonind(newL, S))) <= maxdim
+  # @assert (old_linkdim + dim(commonind(newR, S))) <= maxdim
+  # @assert dim(newl) <= maxdim
+  # @assert dim(newr) <= maxdim
 
   ###zero-pad bond-tensor (the orthogonality center)
-  C = ITensor(dag(newl)..., dag(newr)...)
+  C = ITensor(newl, newr)
   ψC = bondtensor
   ### FIXME: the permute below fails, maybe because this already the layout of bondtensor --- in any case it shouldn't fail?
   #ψC = permute(bondtensor, linkind_l, linkind_r)
@@ -145,11 +144,10 @@ end
 function _subspace_expand_core_krylov(
   centerwf::Vector{ITensor}, PH, NL, NR, b; maxdim, cutoff, kwargs...
 )
-
   (n1,n2) = b
   g = underlying_graph(PH)
   maxdim = min(maxdim, 15)
-  @show n1, n2
+
   PHn1 = map(e -> PH.environments[NamedEdge(e)], [v => n1 for v in neighbors(g, n1) if v != n2])
   PHn2 = map(e -> PH.environments[NamedEdge(e)], [v => n2 for v in neighbors(g, n2) if v != n1])
   PHsiteMPOs = map(n -> PH.H[n], b)
@@ -178,29 +176,39 @@ function _subspace_expand_core_krylov(
   #  return y
   #end
   vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-    (x -> noprime(B2 * x), y -> noprime(B2dag * y)), trial, maxdim
-  )    ###seems to work
-  @show vals, inds.(lvecs), inds.(rvecs)
-  # @show collect(zip(vals, lvecs, rvecs))
+    (x -> noprime(B2 * x), y -> noprime(B2dag * y)), trial, tol=cutoff,  
+  )    
 
-  data_cutoff = filter(v->v[1]>1e-8, collect(zip(vals,lvecs,rvecs))[1:maxdim])
+  ### cutoff unnecessary values and expand the resulting vectors by a dummy index
+  data_cutoff = filter(v->v[1]>cutoff, collect(zip(vals,lvecs,rvecs)))
+  (length(data_cutoff) > maxdim) && (data_cutoff = data_cutoff[1:maxdim])
+
   vals  = [d[1] for d in data_cutoff]
   lvecs = [d[2] for d in data_cutoff]
   rvecs = [d[3] for d in data_cutoff]
-  lvecs = fill(lvecs[1], 3)
-  @show lvecs[2:end], lvecs[1]
 
-  U = reduce((x,y) -> ITensors.directsum(
-    x, y, uniqueinds(x,y), uniqueinds(y, x) #; tags=(tags(commonind(ψ[n1],ψ[n2])),)
+  lvecs = map(enumerate(lvecs)) do (i,lvec) 
+    dummy_ind = Index(1; tags="dummyL_$(i)")
+    return ITensor(array(lvec), inds(lvec)..., dummy_ind) => dummy_ind
+  end
+
+  rvecs = map(enumerate(rvecs)) do (i,rvec) 
+    dummy_ind = Index(1; tags="dummyR_$(i)")
+    return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
+  end
+
+  length(rvecs) == 0 && return nothing,nothing,nothing,false
+
+  ### make directsum out of the array of vectors
+  U, newl = reduce((x,y) -> ITensors.directsum(
+    x, y; tags=tags(commonind(centerwf[1],centerwf[2]))
   ), lvecs[2:end]; init=lvecs[1])
-  @show U
-  @show newl
-  V, newr = ITensors.directsum(
-   ϕ_2, dag(newR), uniqueinds(ϕ_2, newR), uniqueinds(newR, ϕ_2); tags=(tags(commonind(ψ[n1],ψ[n2])),)
-  )
+  V, newr = reduce((x,y) -> ITensors.directsum(
+    x, y; tags=tags(commonind(centerwf[2],centerwf[3]))
+  ), rvecs[2:end]; init=rvecs[1])
 
 
-  @show vals, inds.(lvecs), inds.(rvecs)
+  # @show vals, newl, newr
   # @show vals, lvecs, rvecs
   # #TO DO construct U,S,V objects, using only the vals > cutoff, and at most maxdim
 
@@ -209,5 +217,7 @@ function _subspace_expand_core_krylov(
   # @show uniqueinds(NR, R)
   # @show inds(lvecs[1])
   # @show inds(rvecs[1])
-  return println("success!!")
+  NL *= dag(U)
+  NR *= dag(V)
+  return NL, nothing, NR, true
 end

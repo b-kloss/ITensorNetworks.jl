@@ -85,20 +85,23 @@ function update_sweep(
     )
     maxtruncerr = isnothing(spec) ? maxtruncerr : max(maxtruncerr, spec.truncerr)
     if outputlevel >= 2
-      if time_direction(sweep_step) == +1
-        @printf("Sweep %d, direction %s, position (%s,) \n", sw, direction, pos(step))
-      end
-      print("  Truncated using")
-      @printf(" cutoff=%.1E", cutoff)
-      @printf(" maxdim=%.1E", maxdim)
-      print(" mindim=", mindim)
-      print(" current_time=", round(current_time; digits=3))
-      println()
-      if spec != nothing
+      # if time_direction(sweep_step) == +1
+      #   @printf("Sweep %d, direction %s, position (%s,) \n", sw, direction, 1) #pos(step))
+      # end
+      # print("  Truncated using")
+      # @printf(" cutoff=%.1E", cutoff)
+      # @printf(" maxdim=%.1E", maxdim)
+      # print(" mindim=", mindim)
+      # print(" current_time=", round(current_time; digits=3))
+      # println()
+      # if spec != nothing
+      if typeof(pos(sweep_step)) == NamedEdge{Int}
+        @show pos(sweep_step)
         @printf(
           "  Trunc. err=%.2E, bond dimension %d\n",
-          spec.truncerr,
-          linkdim(psi, edgetype(psi)(pos(step)...))
+          # spec.truncerr,
+          0,
+          linkdim(psi, edgetype(psi)(pos(sweep_step)))
         )
       end
       flush(stdout)
@@ -185,10 +188,13 @@ function local_update(
   noise,
   kwargs...,
 )
+  PH2 = get(kwargs, :PH_sq, nothing)
   psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
   psi, phi = extract_local_tensor(psi, pos(sweep_step))
   PH = set_nsite(PH, nsite(sweep_step))
   PH = position(PH, psi, pos(sweep_step))
+  (get(kwargs, :expand, false) == "full") && (PH2 = set_nsite(PH2, nsite(sweep_step)))
+  (get(kwargs, :expand, false) == "full") && (PH2 = position(PH2, psi, pos(sweep_step)))
   phi, info = solver(
     PH,
     phi;

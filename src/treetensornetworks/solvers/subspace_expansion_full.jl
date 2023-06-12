@@ -9,12 +9,11 @@
 
 
 """
-expand subspace (2-site like) in a sweep 
+expand subspace (with the full Hamiltonian) in a sweep 
 """
 function subspace_expansion_full_sweep!(
-  ψ::AbstractTTN{V}, PH::AbstractProjTTN{V}; maxdim, cutoff, atol=1e-10, kwargs...
+  ψ::AbstractTTN{V}, PH::AbstractProjTTN{V}, PH2::AbstractProjTTN{V}; maxdim, cutoff, atol=1e-10, kwargs...
 ) where {V}
-
   order = TDVPOrder(2, Base.Forward)
   direction = directions(order)
   HGraph = underlying_graph(PH)
@@ -24,9 +23,11 @@ function subspace_expansion_full_sweep!(
     ψ = orthogonalize(ψ, startPos)
   end
 
-  nsite = 2
+  nsite = 1
   PH = set_nsite(PH, nsite)
   PH = position(PH, ψ, [startPos])
+  PH2 = set_nsite(PH2, nsite)
+  PH2 = position(PH2, ψ, [startPos])
 
   ##both forward and backward directions
   for dir in direction
@@ -40,9 +41,10 @@ function subspace_expansion_full_sweep!(
       ##TODO: figure out whether these calls should be here or inside subspace expansion, currently we do both?
       ψ = orthogonalize(ψ, b[1])
       PH = position(PH, ψ, [b[1]])
+      PH2 = position(PH2, ψ, [b[1]])
 
       subspace_expansion_full!(
-        ψ, PH, b; maxdim, cutoff=cutoff, atol=atol, kwargs...
+        ψ, PH, PH2, b; maxdim, cutoff=cutoff, atol=atol, kwargs...
       )
 
     end
@@ -85,6 +87,7 @@ end
 function subspace_expansion_full!(
   ψ::ITensorNetworks.AbstractTTN{Vert},
   PH,
+  PH2,
   b::Vector{Vert};
   bondtensor=nothing,
   maxdim,
@@ -119,25 +122,12 @@ function subspace_expansion_full!(
   ϕ_2 = ψ[n2] * V
   bondtensor = S
   old_linkdim = dim(commonind(U, S))
-  # bondtensor = S
+
+  PH  = position(PH, ψ, [n1])
+  PH2 = position(PH2, ψ, [n1])
 
   # don't expand if we are already at maxdim
   old_linkdim >= maxdim && return nothing
-  PH = position(PH, ψ, [n1])
-
-  ## brute-force for now, need a better way to do that
-  PHn1 = map(e -> PH.environments[NamedEdge(e)], [v => n1 for v in neighbors(g, n1) if v != n2])
-  PHn1 = reduce(*, PHn1, init=ϕ_1*bondtensor*PH.H[n1])
-  if n2 > n1
-    PHn2 = mapreduce(*, filter(x->x>n2, vertices(ψ)); init=ϕ_2*PH.H[n2]) do v
-      return ψ[v]*PH.H[v]
-    end
-  else
-    PHn2 = mapreduce(*, filter(x->x<n2, vertices(ψ)); init=ϕ_2*PH.H[n2]) do v
-      return ψ[v]*PH.H[v]
-    end
-  end
-
 
   # orthogonalize(ψ,n1)
   linkind_l = commonind(ϕ_1, S)
@@ -150,16 +140,27 @@ function subspace_expansion_full!(
   # if nullspace is empty (happen's for product states with QNs)
   norm(Nn1) == 0.0 && return bondtensor
 
-  # form 2-site wavefunction
-  ϕ = [ϕ_1, bondtensor, ϕ_2]
+  ## brute-force for now, need a better way to do that
+  PHn1 = map(e -> PH.environments[NamedEdge(e)], [v => n1 for v in neighbors(g, n1) if v != n2])
+  PHn1 = noprime(reduce(*, PHn1, init=ϕ_1*PH.H[n1])) * Nn1
+  PHn2 = map(e -> PH2.environments[NamedEdge(e)], [v => n2 for v in neighbors(g, n2) if v != n1])
+  PHn2 = reduce(*, PHn2, init=(ϕ_2*PH2.H[n2]*prime(dag(ϕ_2)))*bondtensor*prime(dag(bondtensor)))
 
-  ϕH = noprime(PHn1)*Nn1*PHn2
-  
-  # success || println("Subspace expansion not successful. This may indicate that 2-site TDVP also fails for the given state and Hamiltonian.")
+  # if n2 > n1
+  #   PHn2 = mapreduce(*, filter(x->x>n2, vertices(ψ)); init=ϕ_2*PH.H[n2]) do v
+  #     return ψ[v]*PH.H[v]
+  #   end
+  # else
+  #   PHn2 = mapreduce(*, filter(x->x<n2, vertices(ψ)); init=ϕ_2*PH.H[n2]) do v
+  #     return ψ[v]*PH.H[v]
+  #   end
+  # end
+
+  ϕH = PHn1*PHn2*prime(dag(PHn1))  
+
   norm(ϕH) == 0. && return nothing
 
   # get subspace expansion
-  
   # newL, S, newR, success = _subspace_expand_full_core(
   #   ϕ, PHn1, PHn2, Nn1; maxdim=maxdim - old_linkdim, cutoff, kwargs...
   # )
@@ -167,7 +168,7 @@ function subspace_expansion_full!(
   U, S, V = svd(
     ϕH,
     commoninds(ϕH, Nn1);
-    maxdim,
+    maxdim=maxdim - old_linkdim,
     cutoff,
     use_relative_cutoff=false,
     use_absolute_cutoff=true,
