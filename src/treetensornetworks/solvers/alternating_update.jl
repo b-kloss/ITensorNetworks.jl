@@ -28,6 +28,7 @@ end
 
 function alternating_update(
   solver,
+  expander,
   PH,
   psi0::AbstractTTN;
   checkdone=nothing,
@@ -41,7 +42,6 @@ function alternating_update(
 )
   maxdim, mindim, cutoff, noise = process_sweeps(nsweeps; kwargs...)
   step_observer = get(kwargs, :step_observer!, nothing)
-  expand = get(kwargs, :expand, false)
 
   psi = copy(psi0)
 
@@ -66,6 +66,7 @@ function alternating_update(
       psi, PH, info = update_step(
         tdvp_order,
         solver,
+        expander,
         PH,
         time_step,
         psi;
@@ -82,22 +83,22 @@ function alternating_update(
 
     current_time += time_step
 
-    D = maxdim[sw]
-    # @time begin
-    if expand == "2-site"
-      psi = subspace_expansion_sweep!(psi, PH; maxdim = D, cutoff = 1e-8)
-    elseif expand == "full"
-      PH2 = get(kwargs, :PH_sq, nothing)
-      isnothing(PH2) && error("PH_sq not implemented")
-      psi = subspace_expansion_full_sweep!(psi, PH, PH2; maxdim = D, cutoff = 1e-8)
-    elseif expand == "full2"
-      PH2 = get(kwargs, :PH_sq, nothing)
-      isnothing(PH2) && error("PH_sq not implemented")
-      psi = subspace_expansion_full2_sweep!(psi, PH, PH2; maxdim = D, cutoff = 1e-8)
-    elseif expand == "krylov"
-      psi = subspace_expansion_krylov_sweep!(psi, PH; maxdim = D, cutoff = 1e-8)
+    # D = maxdim[sw]
+    # # @time begin
+    # if expand == "2-site"
+    #   psi = subspace_expansion_sweep!(psi, PH; maxdim = D, cutoff = 1e-8)
+    # elseif expand == "full"
+    #   PH2 = get(kwargs, :PH_sq, nothing)
+    #   isnothing(PH2) && error("PH_sq not implemented")
+    #   psi = subspace_expansion_full_sweep!(psi, PH, PH2; maxdim = D, cutoff = 1e-8)
+    # elseif expand == "full2"
+    #   PH2 = get(kwargs, :PH_sq, nothing)
+    #   isnothing(PH2) && error("PH_sq not implemented")
+    #   psi = subspace_expansion_full2_sweep!(psi, PH, PH2; maxdim = D, cutoff = 1e-8)
+    # elseif expand == "krylov"
+    #   psi = subspace_expansion_krylov_sweep!(psi, PH; maxdim = D, cutoff = 1e-8)
+    # # end
     # end
-    end
 
     update!(step_observer; psi, sweep=sw, outputlevel, current_time)
 
@@ -120,7 +121,7 @@ function alternating_update(
   return psi
 end
 
-function alternating_update(solver, H::AbstractTTN, psi0::AbstractTTN; kwargs...)
+function alternating_update(solver, expander, H::AbstractTTN, psi0::AbstractTTN; kwargs...)
   check_hascommoninds(siteinds, H, psi0)
   check_hascommoninds(siteinds, H, psi0')
   # Permute the indices to have a better memory layout
@@ -132,7 +133,7 @@ function alternating_update(solver, H::AbstractTTN, psi0::AbstractTTN; kwargs...
   new_vertex_data = replaceprime.(map(*, vertex_data(data_graph(H)), prime.(vertex_data(data_graph(H)))), 2 => 1)
   H2 = TTN(ITensorNetwork(DataGraph(underlying_graph(H), new_vertex_data, edge_data(data_graph(H)))), H.ortho_center)
   PH2 = ProjTTN(H2)
-  return alternating_update(solver, PH, psi0; kwargs..., PH_sq=PH2)
+  return alternating_update(solver, expander, PH, psi0; kwargs..., PH_sq=PH2)
 end
 
 """
@@ -154,12 +155,12 @@ each step of the algorithm when optimizing the MPS.
 Returns:
 * `psi::MPS` - time-evolved MPS
 """
-function alternating_update(solver, Hs::Vector{<:AbstractTTN}, psi0::AbstractTTN; kwargs...)
+function alternating_update(solver, expander, Hs::Vector{<:AbstractTTN}, psi0::AbstractTTN; kwargs...)
   for H in Hs
     check_hascommoninds(siteinds, H, psi0)
     check_hascommoninds(siteinds, H, psi0')
   end
   Hs .= ITensors.permute.(Hs, Ref((linkind, siteinds, linkind)))
   PHs = ProjTTNSum(Hs)
-  return alternating_update(solver, PHs, psi0; kwargs...)
+  return alternating_update(solver, expander, PHs, psi0; kwargs...)
 end

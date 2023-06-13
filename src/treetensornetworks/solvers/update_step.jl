@@ -1,6 +1,7 @@
 function update_step(
   order::TDVPOrder,
   solver,
+  expander,
   PH,
   time_step::Number,
   psi::AbstractTTN;
@@ -14,6 +15,7 @@ function update_step(
     psi, PH, info = update_sweep(
       directions_[substep],
       solver,
+      expander,
       PH,
       psi;
       current_time,
@@ -32,6 +34,7 @@ isforward(direction::Base.ReverseOrdering) = false
 function update_sweep(
   direction::Base.Ordering,
   solver,
+  expander,
   PH,
   psi::AbstractTTN;
   current_time=0.0,
@@ -72,6 +75,7 @@ function update_sweep(
   )
     psi, PH, current_time, spec, info = local_update(
       solver,
+      expander,
       PH,
       psi,
       sweep_step;
@@ -178,9 +182,10 @@ end
 
 function local_update(
   solver,
+  expander,
   PH,
   psi,
-  sweep_step;
+  sweep_step;   
   current_time,
   outputlevel,
   time_step,
@@ -190,11 +195,27 @@ function local_update(
 )
   PH2 = get(kwargs, :PH_sq, nothing)
   psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
-  psi, phi = extract_local_tensor(psi, pos(sweep_step))
-  PH = set_nsite(PH, nsite(sweep_step))
-  PH = position(PH, psi, pos(sweep_step))
+  # PH = set_nsite(PH, nsite(sweep_step))
+  # PH = position(PH, psi, pos(sweep_step))
   (get(kwargs, :expand, false) == "full") && (PH2 = set_nsite(PH2, nsite(sweep_step)))
   (get(kwargs, :expand, false) == "full") && (PH2 = position(PH2, psi, pos(sweep_step)))
+
+  psi, PH = expander(
+    PH,
+    psi,
+    pos(sweep_step),
+    # maxdim=20, #maxdim
+    # cutoff=1E-10, #cutoff,
+    # kwargs...,
+  )
+
+  psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
+  PH = set_nsite(PH, nsite(sweep_step))
+  # @show current_ortho(sweep_step)
+  # @show psi, PH
+  PH = position(PH, psi, pos(sweep_step))
+  psi, phi = extract_local_tensor(psi, pos(sweep_step))
+
   phi, info = solver(
     PH,
     phi;

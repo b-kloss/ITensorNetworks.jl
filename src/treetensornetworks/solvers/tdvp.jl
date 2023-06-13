@@ -77,6 +77,7 @@ end
 
 function tdvp(
   solver,
+  expander,
   H,
   t::Number,
   init::AbstractTTN;
@@ -87,7 +88,7 @@ function tdvp(
 )
   nsweeps = _compute_nsweeps(nsteps, t, time_step)
   tdvp_order = TDVPOrder(order, Base.Forward)
-  return alternating_update(solver, H, init; nsweeps, tdvp_order, time_step, kwargs...)
+  return alternating_update(solver, expander, H, init; nsweeps, tdvp_order, time_step, kwargs...)
 end
 
 """
@@ -109,5 +110,5 @@ Optional keyword arguments:
 * `write_when_maxdim_exceeds::Int` - when the allowed maxdim exceeds this value, begin saving tensors to disk to free memory in large calculations
 """
 function tdvp(H, t::Number, init::AbstractTTN; kwargs...)
-  return tdvp(tdvp_solver(; kwargs...), H, t, init; kwargs...)
+  return tdvp(tdvp_solver(; kwargs...), general_expander(; kwargs...), H, t, init; kwargs...)
 end
