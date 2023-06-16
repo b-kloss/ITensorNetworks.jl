@@ -193,28 +193,24 @@ function local_update(
   noise,
   kwargs...,
 )
-  PH2 = get(kwargs, :PH_sq, nothing)
   psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
-  # PH = set_nsite(PH, nsite(sweep_step))
-  # PH = position(PH, psi, pos(sweep_step))
-  (get(kwargs, :expand, false) == "full") && (PH2 = set_nsite(PH2, nsite(sweep_step)))
-  (get(kwargs, :expand, false) == "full") && (PH2 = position(PH2, psi, pos(sweep_step)))
+
+  # PH2 = get(kwargs, :PH_sq, nothing)
+  # (get(kwargs, :expand, false) == "full") && (PH2 = set_nsite(PH2, nsite(sweep_step)))
+  # (get(kwargs, :expand, false) == "full") && (PH2 = position(PH2, psi, pos(sweep_step)))
 
   psi, PH = expander(
     PH,
     psi,
-    pos(sweep_step),
-    # maxdim=20, #maxdim
-    # cutoff=1E-10, #cutoff,
-    # kwargs...,
+    pos(sweep_step);
+    maxdim,
+    cutoff,
+    kwargs...,
   )
 
-  psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
-  PH = set_nsite(PH, nsite(sweep_step))
-  # @show current_ortho(sweep_step)
-  # @show psi, PH
-  PH = position(PH, psi, pos(sweep_step))
   psi, phi = extract_local_tensor(psi, pos(sweep_step))
+  PH = set_nsite(PH, nsite(sweep_step))
+  PH = position(PH, psi, pos(sweep_step))
 
   phi, info = solver(
     PH,

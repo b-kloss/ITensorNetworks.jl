@@ -129,11 +129,7 @@ function alternating_update(solver, expander, H::AbstractTTN, psi0::AbstractTTN;
   H = ITensors.permute(H, (linkind, siteinds, linkind))
   PH = ProjTTN(H)
 
-  # build H^2 out of H
-  new_vertex_data = replaceprime.(map(*, vertex_data(data_graph(H)), prime.(vertex_data(data_graph(H)))), 2 => 1)
-  H2 = TTN(ITensorNetwork(DataGraph(underlying_graph(H), new_vertex_data, edge_data(data_graph(H)))), H.ortho_center)
-  PH2 = ProjTTN(H2)
-  return alternating_update(solver, expander, PH, psi0; kwargs..., PH_sq=PH2)
+  return alternating_update(solver, expander, PH, psi0; kwargs...)
 end
 
 """
