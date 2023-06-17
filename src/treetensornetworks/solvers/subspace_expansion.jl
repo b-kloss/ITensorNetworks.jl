@@ -112,20 +112,29 @@ function _krylov_svd_solve(
     lvecs_col = Any[]
     rvecs_col = Any[]
     d = Vector{real(eltype(envMap))}()
+    remainingSpaces = Any[]
 
     for s in space(left_ind[1])
       last(s)==0 && continue
 
       theqn=first(s)
       trial = randomITensor(eltype(envMap), theqn, left_ind)
-    
+
+      # try
+      #     F=svd(mat,alg=LinearAlgebra.DivideAndConquer())
+      # catch e
+      #     F=svd(mat,alg=LinearAlgebra.QRIteration())
+      # end;
+
       vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-        (x -> noprime(envMap * x), y -> noprime(envMapDag * y)), trial, # maxdim
+        (x -> noprime(envMap * x), y -> noprime(envMapDag * y)), trial,
+
       )
 
       push!(vals_col,  vals)
       push!(lvecs_col, lvecs)
       push!(rvecs_col, rvecs)
+      push!(remainingSpaces, s)
       append!(d, vals)
     end
 
@@ -151,61 +160,59 @@ function _krylov_svd_solve(
       if blockdim == 0
         push!(dropblocks,n)
       else
-        vals_col[n] .= vals[1:blockdim]
-        lvecs_col[n] .= lvecs_col[n][1:blockdim]
-        rvecs_col[n] .= rvecs_col[n][1:blockdim]
+        vals_col[n] = vals[1:blockdim]
+        lvecs_col[n] = lvecs_col[n][1:blockdim]
+        rvecs_col[n] = rvecs_col[n][1:blockdim]
       end
     end
 
     deleteat!(vals_col,  dropblocks)
     deleteat!(lvecs_col, dropblocks)
     deleteat!(rvecs_col, dropblocks)
+    deleteat!(remainingSpaces,  dropblocks)
 
     (length(vals_col) == 0) && return nothing,nothing,nothing
-    @show length(vals_col)
 
-    map(lvecs_col) do lvecs
-      @show storage(lvecs[1]).data
-      @show inds(lvecs[1])
-      # @show eachnzblock(storage(lvecs[1]).blockoffsets)
-      # @show nzblocks(storage(lvecs[1]).blockoffsets)
-      @show lvecs[1]
-      dummy_ind = Index(1; tags="test") 
-      @show NDTensors.BlockSparseTensor(ComplexF64, nzblocks(lvecs[1]),inds(lvecs[1]))
-    end
-    error("stop")
-
-    lvecs_col = map(lvecs_col) do lvecs
+    ### make directsum out of the array of vectors
+    lvecs_col = map(zip(remainingSpaces,lvecs_col)) do (s,lvecs)
       return map(lvecs) do lvec 
-        dummy_ind = Index(1; tags="u") #tags(commonind(centerwf[1],centerwf[2])))
+        dummy_ind = Index(Pair(first(s),1); tags="u", dir=ITensors.In)
         return ITensor(array(lvec), inds(lvec)..., dummy_ind) => dummy_ind
       end
     end
 
-    # map(lvecs_col) do lvecs
-    #   @show typeof(storage(lvecs[1][1]))
-    #   @show lvecs
-    # end
-
-    rvecs = map(enumerate(rvecs)) do (i,rvec) 
-      dummy_ind = Index(1; tags="v") #tags(commonind(centerwf[1],centerwf[2])))
-      return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
+    lvecs_col = map(lvecs_col) do lvecs
+      return reduce((x,y) -> ITensors.directsum(
+        x, y; tags="u",
+      ), lvecs[2:end]; init=lvecs[1])
     end
 
-    ### make directsum out of the array of vectors
     U,_ = reduce((x,y) -> ITensors.directsum(
-      x, y; tags="u" #tags(commonind(centerwf[1],centerwf[2]))
-    ), lvecs[2:end]; init=lvecs[1])
+      x, y; tags="u" 
+    ), lvecs_col[2:end]; init=lvecs_col[1])
+
+    rvecs_col = map(zip(remainingSpaces,rvecs_col)) do (s,rvecs)
+      return map(rvecs) do rvec 
+        dummy_ind = Index(Pair(first(s),1); tags="v", dir=ITensors.Out)
+        return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
+      end
+    end
+
+    rvecs_col = map(rvecs_col) do rvecs
+      return reduce((x,y) -> ITensors.directsum(
+        x, y; tags="v",
+      ), rvecs[2:end]; init=rvecs[1])
+    end
 
     V,_ = reduce((x,y) -> ITensors.directsum(
-      x, y; tags="v" #tags(commonind(centerwf[2],centerwf[3]))
-    ), rvecs[2:end]; init=rvecs[1])
+      x, y; tags="v",
+    ), rvecs_col[2:end]; init=rvecs_col[1])
 
-    S = ITensors.diagITensor(vals, filter(v->hastags(v, "u"), inds(U)), filter(v->hastags(v, "v"), inds(V)))
 
+    S = ITensors.diagITensor(vcat(vals_col...), filter(v->hastags(v, "u"), inds(U)), filter(v->hastags(v, "v"), inds(V)))
   end
 
-  return U,S,V
+  return U,S,dag(V)
 end
 
 function _two_site_expand_core(
@@ -248,14 +255,23 @@ function _two_site_expand_core(
   outinds = uniqueinds(NL,phi_1)
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([NL,PHn1,PHn2,NR], ininds, outinds)
 
-  norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-13 && return psi
+  norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-6 && return psi
 
   U,S,V= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
   isnothing(U) && return psi
 
   @assert dim(commonind(U, S)) ≤ maxdim
-  @show NL
-
+  # @show inds(psi[n1])
+  # @show inds(psi[n2])
+  # @show inds(phi_1)
+  # @show inds(phi_2)
+  #
+  # @show inds(NL)
+  # @show inds(U)
+  # @show inds(NR)
+  # @show inds(V)
+  # @show inds(dag(V))
+  # @show inds(adjoint(V))
   NL *= dag(U)
   NR *= dag(V)
 
@@ -369,7 +385,7 @@ function _full_expand_core(
 
   psi[n1] = noprime(new_psi_1)
   psi[n2] = phi_2*new_bondtensor
-  PH2 = position(PH2, psi, [n1,n2])
+  # PH2 = position(PH2, psi, [n1,n2])
 
   return psi
 end
