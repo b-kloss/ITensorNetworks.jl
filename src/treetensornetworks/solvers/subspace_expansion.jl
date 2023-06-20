@@ -120,6 +120,16 @@ function _krylov_svd_solve(
       theqn=first(s)
       trial = randomITensor(eltype(envMap), theqn, left_ind)
 
+      ##some checks to not pass singular/zero-size problem to KrylovKit
+      adjtrial=envMapDag(trial)
+      trial2=envMap(adjtrial)
+      if size(storage(adjtrial))==(0,) || size(storage(trial2))==(0,)
+        continue
+      elseif ! _kkit_init_check(trial, envMapDag,envMap)
+        continue
+      end
+      
+
       # try
       #     F=svd(mat,alg=LinearAlgebra.DivideAndConquer())
       # catch e
@@ -253,7 +263,7 @@ function _two_site_expand_core(
 
   ininds = uniqueinds(NR,phi_2)
   outinds = uniqueinds(NL,phi_1)
-  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([NL,PHn1,PHn2,NR], ininds, outinds)
+  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([NL,PHn1,PHn2,NR], outinds, ininds)
 
   norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-6 && return psi
 
@@ -388,4 +398,21 @@ function _full_expand_core(
   # PH2 = position(PH2, psi, [n1,n2])
 
   return psi
+end
+
+function _kkit_init_check(u₀,theadj,thenormal)
+  β₀ = norm(u₀)
+  iszero(β₀) && throw(ArgumentError("initial vector should not have norm zero"))
+  v₀ = theadj(u₀)
+  α = norm(v₀) / β₀
+  Av₀ = thenormal(v₀) # apply operator
+  α² = dot(u₀, Av₀) / β₀^2
+  #@show α², α * α
+  #@show norm(α²),eps(Float64)
+  if norm(α²) < eps(Float64)
+    return false
+  else
+    α² ≈ α * α || throw(ArgumentError("operator and its adjoint are not compatible"))
+  end
+  return true
 end
