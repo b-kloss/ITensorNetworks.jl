@@ -2,20 +2,24 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
   function expander(
     PH,
     psi::ITensorNetworks.AbstractTTN{Vert},
-    b;
+    phi,
+    sweep_step;
     maxdim,
     cutoff=1e-10,
     atol=1e-8,
+    expand_dir=-1, # +1 for future direction, 1 for past
     kws...,
   ) where {Vert}
 
-    (typeof(b)!=NamedEdge{Int}) && return psi, PH
+    (typeof(pos(sweep_step))!=NamedEdge{Int}) && return psi, phi, PH
 
     # determine which expansion method and svd method to use
-    if expander_backend == "two_site"
-      _expand_core = _two_site_expand_core
+    if expander_backend == "none"
+      return psi, PH
     elseif expander_backend == "full"
       _expand_core = _full_expand_core
+    elseif expander_backend == "two_site"
+      _expand_core = _two_site_expand_core
     else
       error("expander_backend=$expander_backend not recognized (options are \"2-site\" or \"full\")")
     end
@@ -36,15 +40,23 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
     # between different QNs locally is static once bond dimension saturates maxdim.)
     
     cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
+    # @show "startcheck"
+    # for I in eachindex(phi)
+    #   b = Block(I)
+    #   v = phi[I]
+    #   # @show b
+    #   if NDTensors.hasblock(phi.tensor, b)
+    #     @assert flux(phi) == flux(phi, Tuple(I)...)
+    #   end
+    # end
+    # @show "endcheck"
 
     # get subspace expansion
-    psi = _expand_core(
-      psi, PH, b, svd_func; maxdim, cutoff, cutoff_compress, atol, kwargs...,
+    psi, phi, PH = _expand_core(
+      PH, psi, phi, pos(sweep_step), svd_func; expand_dir, maxdim, cutoff, cutoff_compress, atol, kwargs...,
     )
 
-    PH  = position(PH, psi, [src(b),dst(b)])
-
-    return psi, PH
+    return psi, phi, PH
   end
   return expander
 end
@@ -68,17 +80,161 @@ function _svd_solve_normal(
   return U,S,V
 end
 
+function _kkit_init_check(u₀,theadj,thenormal)
+  β₀ = norm(u₀)
+  iszero(β₀) && throw(ArgumentError("initial vector should not have norm zero"))
+  v₀ = noprime(theadj(u₀))
+  α = norm(v₀) / β₀
+  Av₀ = noprime(thenormal(v₀)) # apply operator
+  α² = dot(u₀, Av₀) / β₀^2
+
+  if norm(α²) < eps(Float64)
+    return false
+  else
+    # @show α²
+    # @show α * α
+    α² ≈ α * α || throw(ArgumentError("operator and its adjoint are not compatible"))
+  end
+  return true
+end
+
+function _build_USV_without_QN(vals, lvecs, rvecs)
+
+  # attach trivial index to left/right eigenvectors to take directsum over it
+  lvecs = map(lvecs) do lvec 
+    dummy_ind = Index(1; tags="u") 
+    return ITensor(array(lvec), inds(lvec)..., dummy_ind) => dummy_ind
+  end
+
+  rvecs = map(rvecs) do rvec 
+    dummy_ind = Index(1; tags="v")
+    return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
+  end
+
+  ### perform directsum
+  U,_ = reduce((x,y) -> ITensors.directsum(
+    x, y; tags="u", 
+  ), lvecs[2:end]; init=lvecs[1])
+
+  V,_ = reduce((x,y) -> ITensors.directsum(
+    x, y; tags="v",
+  ), rvecs[2:end]; init=rvecs[1])
+
+  S = ITensors.diagITensor(vals, filter(v->hastags(v, "u"), inds(U)), filter(v->hastags(v, "v"), inds(V)))
+
+  return U,S,V
+end
+
+function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces)
+  # attach trivial index to left/right eigenvectors to take directsum over it
+  lvecs_col = map(zip(remainingSpaces,lvecs_col)) do (s,lvecs)
+    return map(lvecs) do lvec 
+      dummy_ind = Index(Pair(first(s),1); tags="u", dir=ITensors.In)
+      return ITensor(array(lvec), inds(lvec)..., dummy_ind) => dummy_ind
+    end
+  end
+
+  rvecs_col = map(zip(remainingSpaces,rvecs_col)) do (s,rvecs)
+    return map(rvecs) do rvec 
+      dummy_ind = Index(Pair(-first(s),1); tags="v", dir=ITensors.Out)
+      res = ITensor(array(rvec), inds(rvec)..., dummy_ind)
+      # @show flux(res)
+      return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
+    end
+  end
+
+  ### perform directsum of left/right eigenvectors for each sector
+  lvecs_col = map(lvecs_col) do lvecs
+    l, inds_l = reduce((x,y) -> ITensors.directsum(
+      x, y; tags="u",
+    ), lvecs[2:end]; init=lvecs[1])
+    length(lvecs) == 1 && return l => inds_l
+    C = combiner(inds_l; tags="u", dir=dir(inds_l))
+    l = l*C
+    return l => commonind(l,C)
+  end
+
+  rvecs_col = map(rvecs_col) do rvecs
+    r, inds_r = reduce((x,y) -> ITensors.directsum(
+      x, y; tags="v",
+    ), rvecs[2:end]; init=rvecs[1])
+    length(rvecs) == 1 && return r => inds_r
+    C = combiner(inds_r; tags="v", dir=dir(inds_r))
+    r = r*C
+    return r => commonind(r,C)
+  end
+
+  ### perform directsum over all sectors
+  U,_ = reduce((x,y) -> ITensors.directsum(
+    x, y; tags="u" 
+  ), lvecs_col[2:end]; init=lvecs_col[1])
+
+  V,_ = reduce((x,y) -> ITensors.directsum(
+    x, y; tags="v",
+  ), rvecs_col[2:end]; init=rvecs_col[1])
+
+  S = ITensors.diagITensor(vcat(vals_col...), filter(v->hastags(v, "u"), inds(U)), filter(v->hastags(v, "v"), inds(V)))
+  return U,S,dag(V)
+end
+
+function _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, cutoff, maxdim) 
+  d .= d .^ 2
+  sort!(d; rev=true)
+  truncerr, docut = truncate!(d; 
+    cutoff, 
+    maxdim,
+    use_relative_cutoff=false, 
+    use_absolute_cutoff=true,
+  )
+
+  dropblocks = Int[]
+
+  for (n,vals) in enumerate(vals_col)
+    full_dim = length(vals)
+    blockdim = 0
+    val = vals[blockdim + 1]^2
+    while blockdim + 1 ≤ full_dim && val > docut
+      blockdim += 1
+      (blockdim + 1 ≤ full_dim) && (val = vals[blockdim + 1]^2)
+    end
+
+    if blockdim == 0
+      push!(dropblocks,n)
+    else
+      vals_col[n] = vals[1:blockdim]
+      lvecs_col[n] = lvecs_col[n][1:blockdim]
+      rvecs_col[n] = rvecs_col[n][1:blockdim]
+    end
+  end
+
+  deleteat!(vals_col,  dropblocks)
+  deleteat!(lvecs_col, dropblocks)
+  deleteat!(rvecs_col, dropblocks)
+  deleteat!(remainingSpaces,  dropblocks)
+end
+
 function _krylov_svd_solve(
   envMap, left_ind; maxdim, cutoff, kwargs...
 )
   maxdim = min(maxdim, 15)
+  # @show maxdim
   envMapDag = adjoint(envMap)
 
   if !hasqns(left_ind)
     trial = randomITensor(eltype(envMap), left_ind)
-    vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-      (x -> noprime(envMap * x), y -> noprime(envMapDag * y)), trial, # maxdim
-    ) 
+
+    if ! _kkit_init_check(trial, envMapDag,envMap)
+      return nothing,nothing,nothing
+    end
+
+    try
+      vals, lvecs, rvecs, info = KrylovKit.svdsolve(
+        (x -> envMap * x, y -> envMapDag * y), trial,
+      )
+    catch e 
+      @show e
+      return _svd_solve_normal(envMap, left_ind; maxdim, cutoff)
+    end
 
     ## cutoff unnecessary values and expand the resulting vectors by a dummy index
     vals = filter(v->v^2≥cutoff, vals)[1:min(maxdim,end)]
@@ -86,26 +242,7 @@ function _krylov_svd_solve(
     lvecs = lvecs[1:min(length(vals),end)]
     rvecs = rvecs[1:min(length(vals),end)]
 
-    lvecs = map(enumerate(lvecs)) do (i,lvec) 
-      dummy_ind = Index(1; tags="u") #tags(commonind(centerwf[1],centerwf[2])))
-      return ITensor(array(lvec), inds(lvec)..., dummy_ind) => dummy_ind
-    end
-
-    rvecs = map(enumerate(rvecs)) do (i,rvec) 
-      dummy_ind = Index(1; tags="v") #tags(commonind(centerwf[1],centerwf[2])))
-      return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
-    end
-
-    ### make directsum out of the array of vectors
-    U,_ = reduce((x,y) -> ITensors.directsum(
-      x, y; tags="u" #tags(commonind(centerwf[1],centerwf[2]))
-    ), lvecs[2:end]; init=lvecs[1])
-
-    V,_ = reduce((x,y) -> ITensors.directsum(
-      x, y; tags="v" #tags(commonind(centerwf[2],centerwf[3]))
-    ), rvecs[2:end]; init=rvecs[1])
-
-    S = ITensors.diagITensor(vals, filter(v->hastags(v, "u"), inds(U)), filter(v->hastags(v, "v"), inds(V)))
+    U,S,V = _build_USV_without_QN(vals, lvecs, rvecs)
 
   else
     vals_col  = Any[]
@@ -128,18 +265,15 @@ function _krylov_svd_solve(
       elseif ! _kkit_init_check(trial, envMapDag,envMap)
         continue
       end
-      
 
-      # try
-      #     F=svd(mat,alg=LinearAlgebra.DivideAndConquer())
-      # catch e
-      #     F=svd(mat,alg=LinearAlgebra.QRIteration())
-      # end;
-
-      vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-        (x -> noprime(envMap * x), y -> noprime(envMapDag * y)), trial,
-
-      )
+      try
+        vals, lvecs, rvecs, info = KrylovKit.svdsolve(
+          (x -> noprime(envMap * x), y -> noprime(envMapDag * y)), trial,
+        )
+      catch e 
+        @show e
+        return _svd_solve_normal(envMap, left_ind; maxdim, cutoff)
+      end
 
       push!(vals_col,  vals)
       push!(lvecs_col, lvecs)
@@ -147,257 +281,188 @@ function _krylov_svd_solve(
       push!(remainingSpaces, s)
       append!(d, vals)
     end
+    (length(d) == 0) && return nothing,nothing,nothing
 
-    d .= d .^ 2
-    sort!(d; rev=true)
-    truncerr, docut = truncate!(d; 
-      cutoff, 
-      use_relative_cutoff=false, 
-      use_absolute_cutoff=true,
-    )
-
-    dropblocks = Int[]
-
-    for (n,vals) in enumerate(vals_col)
-      full_dim = length(vals)
-      blockdim = 0
-      val = vals[blockdim + 1]^2
-      while blockdim + 1 ≤ full_dim && val > docut
-        blockdim += 1
-        (blockdim + 1 ≤ full_dim) && (val = vals[blockdim + 1]^2)
-      end
-
-      if blockdim == 0
-        push!(dropblocks,n)
-      else
-        vals_col[n] = vals[1:blockdim]
-        lvecs_col[n] = lvecs_col[n][1:blockdim]
-        rvecs_col[n] = rvecs_col[n][1:blockdim]
-      end
-    end
-
-    deleteat!(vals_col,  dropblocks)
-    deleteat!(lvecs_col, dropblocks)
-    deleteat!(rvecs_col, dropblocks)
-    deleteat!(remainingSpaces,  dropblocks)
+    _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, cutoff, maxdim)
 
     (length(vals_col) == 0) && return nothing,nothing,nothing
 
-    ### make directsum out of the array of vectors
-    lvecs_col = map(zip(remainingSpaces,lvecs_col)) do (s,lvecs)
-      return map(lvecs) do lvec 
-        dummy_ind = Index(Pair(first(s),1); tags="u", dir=ITensors.In)
-        return ITensor(array(lvec), inds(lvec)..., dummy_ind) => dummy_ind
-      end
-    end
-
-    lvecs_col = map(lvecs_col) do lvecs
-      return reduce((x,y) -> ITensors.directsum(
-        x, y; tags="u",
-      ), lvecs[2:end]; init=lvecs[1])
-    end
-
-    U,_ = reduce((x,y) -> ITensors.directsum(
-      x, y; tags="u" 
-    ), lvecs_col[2:end]; init=lvecs_col[1])
-
-    rvecs_col = map(zip(remainingSpaces,rvecs_col)) do (s,rvecs)
-      return map(rvecs) do rvec 
-        dummy_ind = Index(Pair(first(s),1); tags="v", dir=ITensors.Out)
-        return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
-      end
-    end
-
-    rvecs_col = map(rvecs_col) do rvecs
-      return reduce((x,y) -> ITensors.directsum(
-        x, y; tags="v",
-      ), rvecs[2:end]; init=rvecs[1])
-    end
-
-    V,_ = reduce((x,y) -> ITensors.directsum(
-      x, y; tags="v",
-    ), rvecs_col[2:end]; init=rvecs_col[1])
-
-
-    S = ITensors.diagITensor(vcat(vals_col...), filter(v->hastags(v, "u"), inds(U)), filter(v->hastags(v, "v"), inds(V)))
+    U,S,V = _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces)
   end
 
-  return U,S,dag(V)
+  return U,S,V
 end
 
 function _two_site_expand_core(
-  psi, PH, b, svd_func; maxdim, cutoff, cutoff_compress, atol, kwargs...,
+  PH, psi, phi, pos, svd_func; maxdim, cutoff, cutoff_compress, atol, kwargs...,
 )
-  n1, n2 = src(b), dst(b)
+  n1, n2 = src(pos), dst(pos)
   g = underlying_graph(PH)
 
-  U,S,V = svd(
-    psi[n1], uniqueinds(psi[n1], psi[n2]); maxdim=maxdim, cutoff=cutoff_compress,
-  )
-
-  phi_1 = U
-  phi_2 = psi[n2] * V
-  bondtensor = S
-  old_linkdim = dim(commonind(U, S))
+  psi1 = psi[n1]
+  psi2 = psi[n2]
+  old_linkdim = dim(commonind(psi1, phi))
 
   # don't expand if we are already at maxdim
-  (old_linkdim >= maxdim) && return psi
+  (old_linkdim >= maxdim) && return psi, phi, PH
 
-  linkind_l = commonind(phi_1, bondtensor)
-  linkind_r = commonind(phi_2, bondtensor)
+  linkind_l = commonind(psi1, phi)
+  linkind_r = commonind(psi2, phi)
 
   # compute nullspace to the left and right 
-  NL = nullspace(phi_1, linkind_l; atol=atol)
-  NR = nullspace(phi_2, linkind_r; atol=atol)
+  NL = nullspace(psi1, linkind_l; atol=atol)
+  NR = nullspace(psi2, linkind_r; atol=atol)
 
   # if nullspace is empty (happen's for product states with QNs)
-  (norm(NL) == 0.0 || norm(NR) == 0.0) && return psi
+  (norm(NL) == 0.0 || norm(NR) == 0.0) && return psi, phi, PH
 
   PH = set_nsite(PH, 2)
   PH = position(PH, psi, [n1,n2])
 
   PHn1 = map(e -> PH.environments[NamedEdge(e)], [v => n1 for v in neighbors(g, n1) if v != n2])
-  PHn1 = noprime(reduce(*, PHn1, init=phi_1*PH.H[n1]))
+  PHn1 = noprime(reduce(*, PHn1, init=psi1*PH.H[n1]))
   PHn2 = map(e -> PH.environments[NamedEdge(e)], [v => n2 for v in neighbors(g, n2) if v != n1])
-  PHn2 = noprime(reduce(*, PHn2, init=bondtensor*phi_2*PH.H[n2]))
+  PHn2 = noprime(reduce(*, PHn2, init=phi*psi2*PH.H[n2]))
 
-  ininds = uniqueinds(NR,phi_2)
-  outinds = uniqueinds(NL,phi_1)
+  ininds = uniqueinds(NR,psi2)
+  outinds = uniqueinds(NL,psi1)
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([NL,PHn1,PHn2,NR], outinds, ininds)
 
-  norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-6 && return psi
+  norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-13 && return psi, phi, PH
 
   U,S,V= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
-  isnothing(U) && return psi
+  isnothing(U) && return psi, phi, PH
 
   @assert dim(commonind(U, S)) ≤ maxdim
-  # @show inds(psi[n1])
-  # @show inds(psi[n2])
-  # @show inds(phi_1)
-  # @show inds(phi_2)
-  #
-  # @show inds(NL)
-  # @show inds(U)
-  # @show inds(NR)
-  # @show inds(V)
-  # @show inds(dag(V))
-  # @show inds(adjoint(V))
+
   NL *= dag(U)
   NR *= dag(V)
 
   # expand current site tensors
-  new_psi_1, newl = ITensors.directsum(
-    phi_1 => uniqueinds(phi_1, NL), dag(NL) => uniqueinds(NL, phi_1); tags=(tags(commonind(psi[n1],psi[n2])),)
+  new_psi1, newl = ITensors.directsum(
+    psi1 => uniqueinds(psi1, NL), dag(NL) => uniqueinds(NL, psi1); tags=(tags(commonind(psi1,phi)),)
   )
-  new_psi_2, newr = ITensors.directsum(
-    phi_2 => uniqueinds(phi_2, NR), dag(NR) => uniqueinds(NR, phi_2); tags=(tags(commonind(psi[n1],psi[n2])),)
+  Cl = combiner(newl; tags=tags(newl[1]), dir=dir(newl[1]))
+
+  new_psi2, newr = ITensors.directsum(
+    psi2 => uniqueinds(psi2, NR), dag(NR) => uniqueinds(NR, psi2); tags=(tags(commonind(psi2,phi)),)
   )
+  Cr = combiner(newr; tags=tags(newr[1]), dir=dir(newr[1]))
 
   @assert dim(newl) <= maxdim
   @assert dim(newr) <= maxdim
-  
+
   # zero-pad bond-tensor (the orthogonality center)
-  new_bondtensor = ITensor(dag(newl)..., dag(newr)...)
-  map(eachindex(bondtensor)) do I
-    v = bondtensor[I]
-    !iszero(v) && (return new_bondtensor[I]=v)
+  if hasqns(phi)
+    new_phi=ITensor(eltype(phi),flux(phi),dag(newr)...,dag(newl)...)
+    fill!(new_phi,0.0)
+  else
+    new_phi = ITensor(eltype(phi), dag(newr)...,dag(newl)...)
   end
 
-  psi[n2] = new_psi_2
-  psi[n1] = noprime(new_psi_1 * new_bondtensor)
+  # @show nzblocks(phi)
+  # @show nzblocks(new_phi)
 
-  return psi
+  map(eachindex(phi)) do I
+    v = phi[I]
+    !iszero(v) && (return new_phi[I]=v)
+  end
+
+  psi[n2] = new_psi2*Cr
+  psi[n1] = noprime(new_psi1*Cl)
+
+  new_phi = dag(Cl)*new_phi*dag(Cr)
+
+  return psi, new_phi, PH
 end
 
 function _full_expand_core(
-  # psi, PH, b, svd_func; maxdim, cutoff, cutoff_compress, atol, kwargs...,
-  psi::ITensorNetworks.AbstractTTN{Vert},
-  PH,
-  b,
-  svd_func;
-  expander_cache=Any[],
-  maxdim,
-  cutoff,
-  cutoff_compress,
-  atol=1e-8,
-  kwargs...,
- ) where {Vert}
+  PH, psi, phi, pos, svd_func; expand_dir, maxdim, cutoff, cutoff_compress, atol, expander_cache=Any[],kwargs..., 
+) where {Vert}
 
   if isempty(expander_cache)
     @warn("building environment of H^2 from scratch!")
-    # build H^2 out of H
-    new_vertex_data = replaceprime.(map(*, vertex_data(data_graph(PH.H)), prime.(vertex_data(data_graph(PH.H)))), 2 => 1)
-    H2 = TTN(ITensorNetwork(DataGraph(underlying_graph(PH.H), new_vertex_data, edge_data(data_graph(PH.H)))), PH.H.ortho_center)
+
+    g = underlying_graph(PH.H)
+    H = vertex_data(data_graph(PH.H))
+
+    H_dag = swapprime.(prime.(dag.(H)), 1,2, tags = "Site")
+    H2_vd= replaceprime.(map(*, H, H_dag), 2 => 1)
+    H2_ed = edge_data(data_graph(PH.H))
+
+    H2 = TTN(ITensorNetwork(DataGraph(g, H2_vd, H2_ed)), PH.H.ortho_center)
+
     push!(expander_cache, ProjTTN(H2))
   end
 
   PH2 = expander_cache[1]
+  n1 = expand_dir>0 ? dst(pos) : src(pos)
+  n2 = expand_dir>0 ? src(pos) : dst(pos)
 
-  n1, n2 = src(b), dst(b)
-  cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
-  g = underlying_graph(PH)
-
-  U, S, V = svd(
-    psi[n1], uniqueinds(psi[n1], psi[n2]); maxdim=maxdim, cutoff=cutoff_compress, kwargs...
-  )
-
-  phi_1 = U
-  phi_2 = psi[n2] * V
-  bondtensor = S
-  old_linkdim = dim(commonind(U, S))
-
-  # don't expand if we are already at maxdim
-  old_linkdim >= maxdim && return psi
-
-  # compute nullspace to the left and right 
-  linkind_l = commonind(phi_1, S)
-  Nn1 = nullspace(phi_1, linkind_l; atol=atol)
-
-  # if nullspace is empty (happen's for product states with QNs)
-  norm(Nn1) == 0.0 && return psi
-
-  PH  = position(PH, psi, [n1])
+  PH2 = set_nsite(PH2, 1)
   PH2 = position(PH2, psi, [n1])
 
+  psi1 = psi[n1]
+  psi2 = psi[n2]
+  old_linkdim = dim(commonind(psi1, phi))
+
+  # don't expand if we are already at maxdim
+  old_linkdim >= maxdim && return psi, phi, PH
+
+  # compute nullspace to the left and right 
+  linkind_l = commonind(psi1, phi)
+  nullVec = nullspace(psi1, linkind_l; atol=atol)
+
+  # if nullspace is empty (happen's for product states with QNs)
+  norm(nullVec) == 0.0 && return psi, phi, PH
+
+  PH = position(PH, psi, [n1])
+
   ## compute both environments
+  g = underlying_graph(PH)
   PHn1 = map(e -> PH.environments[NamedEdge(e)], [v => n1 for v in neighbors(g, n1) if v != n2])
-  PHn1 = noprime(reduce(*, PHn1, init=bondtensor*phi_1*PH.H[n1]))*Nn1
+  PHn1 = noprime(reduce(*, PHn1, init=phi*psi1*PH.H[n1]))*nullVec
   PHn2 = map(e -> PH2.environments[NamedEdge(e)], [v => n2 for v in neighbors(g, n2) if v != n1])
-  PHn2 = reduce(*, PHn2, init=(phi_2*PH2.H[n2]*adjoint(phi_2)))
+  PHn2 = reduce(*, PHn2, init=(psi2*PH2.H[n2]*prime(dag(psi2))))
 
-  outinds = commoninds(Nn1, PHn1)
+  outinds = commoninds(nullVec, PHn1)
   ininds = adjoint.(outinds)
-  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([PHn1,PHn2,adjoint(PHn1)], ininds, outinds)
+  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([PHn1,PHn2,prime(dag(PHn1))], ininds, outinds)
 
-  norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-13 && return psi
+  norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-13 && return psi,phi,PH
 
   # svd-decomposition
-  U,S,V= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
-  isnothing(U) && return psi
+  U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+  isnothing(U) && return psi,phi,PH
 
   @assert dim(commonind(U, S)) ≤ maxdim
 
-  newL = Nn1*dag(U)
+  newL = nullVec*dag(U)
 
   # expand current site tensors
-  new_psi_1, newl = ITensors.directsum(
-    phi_1 => uniqueinds(phi_1, newL), dag(newL) => uniqueinds(newL, phi_1); tags=(tags(commonind(psi[n1],psi[n2])),)
+  new_psi, newl = ITensors.directsum(
+    psi1 => uniqueinds(psi1, newL), dag(newL) => uniqueinds(newL, psi1); tags=(tags(commonind(psi1,phi)),)
   )
+  Cl = combiner(newl; tags=tags(newl[1]), dir=dir(newl[1]))
 
   @assert dim(newl) <= maxdim
 
   # zero-pad bond-tensor (the orthogonality center)
-  new_bondtensor = ITensor(dag(newl)..., commonind(bondtensor, phi_2))
-  map(eachindex(bondtensor)) do I
-    v = bondtensor[I]
-    !iszero(v) && (return new_bondtensor[I]=v)
+  if hasqns(phi)
+    new_phi=ITensor(eltype(phi),flux(phi),commonind(phi,psi2),dag(newl)...)
+    fill!(new_phi,0.0)
+  else
+    new_phi = ITensor(eltype(phi),commonind(phi,psi2),dag(newl)...)
   end
 
-  psi[n1] = noprime(new_psi_1)
-  psi[n2] = phi_2*new_bondtensor
-  # PH2 = position(PH2, psi, [n1,n2])
+  map(eachindex(phi)) do I
+    v = phi[I]
+    !iszero(v) && (return new_phi[I]=v)
+  end
 
-  return psi
+  psi[n1] = noprime(new_psi*Cl)
+
+  return psi, dag(Cl)*new_phi, PH
 end
 
 function _kkit_init_check(u₀,theadj,thenormal)

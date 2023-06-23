@@ -100,7 +100,6 @@ function update_sweep(
       # println()
       # if spec != nothing
       if typeof(pos(sweep_step)) == NamedEdge{Int}
-        @show pos(sweep_step)
         @printf(
           "  Trunc. err=%.2E, bond dimension %d\n",
           # spec.truncerr,
@@ -193,24 +192,36 @@ function local_update(
   noise,
   kwargs...,
 )
+
   psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
+  psi, phi = extract_local_tensor(psi, pos(sweep_step))
+  PH = set_nsite(PH, nsite(sweep_step))
+  PH = position(PH, psi, pos(sweep_step))
 
-  # PH2 = get(kwargs, :PH_sq, nothing)
-  # (get(kwargs, :expand, false) == "full") && (PH2 = set_nsite(PH2, nsite(sweep_step)))
-  # (get(kwargs, :expand, false) == "full") && (PH2 = position(PH2, psi, pos(sweep_step)))
-
-  psi, PH = expander(
+  # @show pos(sweep_step)
+  psi,phi,PH = expander(
     PH,
     psi,
-    pos(sweep_step);
+    phi,
+    sweep_step;
     maxdim,
     cutoff,
     kwargs...,
   )
 
-  psi, phi = extract_local_tensor(psi, pos(sweep_step))
   PH = set_nsite(PH, nsite(sweep_step))
   PH = position(PH, psi, pos(sweep_step))
+
+  # @show "startcheck PH"
+  # for env in PH.environments
+  #   for I in eachindex(env)
+  #     b = Block(I)
+  #     if NDTensors.hasblock(env.tensor, b)
+  #       @assert (flux(env) == flux(env, Tuple(I)...)) || iszero(env[I])
+  #     end
+  #   end
+  # end
+  # @show "endcheck PH"
 
   phi, info = solver(
     PH,
@@ -220,6 +231,7 @@ function local_update(
     outputlevel,
     kwargs...,
   )
+
   current_time += time_step
   normalize && (phi /= norm(phi))
   drho = nothing

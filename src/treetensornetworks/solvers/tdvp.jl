@@ -8,7 +8,7 @@ function exponentiate_solver(; kwargs...)
     solver_maxiter=100,
     solver_outputlevel=0,
     solver_tol=1E-12,
-    substep,
+    substep,    
     time_step,
     kws...,
   )
@@ -32,18 +32,18 @@ function applyexp_solver(; kwargs...)
   function solver(
     H,
     init;
-    tdvp_order,
+    tdvp_order = ITensorNetworks.TDVPOrder(2, Base.Forward),
     solver_krylovdim=30,
     solver_outputlevel=0,
     solver_tol=1E-8,
     substep,
-    time_step,
+    time_step,  
     kws...,
   )
     solver_kwargs = (; maxiter=solver_krylovdim, outputlevel=solver_outputlevel)
 
     #applyexp tol is absolute, compute from tol_per_unit_time:
-    tol = abs(time_step) * tol_per_unit_time
+    tol = abs(time_step) * solver_tol
     psi, info = applyexp(H, time_step, init; tol, solver_kwargs..., kws...)
     return psi, info
   end
