@@ -125,8 +125,9 @@ function _build_USV_without_QN(vals, lvecs, rvecs)
   return U,S,V
 end
 
-function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces)
+function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces;envflux)
   # attach trivial index to left/right eigenvectors to take directsum over it
+  @show envflux
   lvecs_col = map(zip(remainingSpaces,lvecs_col)) do (s,lvecs)
     return map(lvecs) do lvec 
       dummy_ind = Index(Pair(first(s),1); tags="u", dir=ITensors.In)
@@ -135,8 +136,9 @@ function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces)
   end
 
   rvecs_col = map(zip(remainingSpaces,rvecs_col)) do (s,rvecs)
-    return map(rvecs) do rvec 
-      dummy_ind = Index(Pair(-first(s),1); tags="v", dir=ITensors.Out)
+    return map(rvecs) do rvec
+      rvec=rvec 
+      dummy_ind = Index(Pair(envflux-first(s),1); tags="v", dir=ITensors.In)
       res = ITensor(array(rvec), inds(rvec)..., dummy_ind)
       # @show flux(res)
       return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
@@ -172,9 +174,8 @@ function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces)
   V,_ = reduce((x,y) -> ITensors.directsum(
     x, y; tags="v",
   ), rvecs_col[2:end]; init=rvecs_col[1])
-
-  S = ITensors.diagITensor(vcat(vals_col...), filter(v->hastags(v, "u"), inds(U)), filter(v->hastags(v, "v"), inds(V)))
-  return U,S,dag(V)
+  S = ITensors.diagITensor(vcat(vals_col...), filter(v->hastags(v, "u"), dag(inds(U))), filter(v->hastags(v, "v"), dag(inds(V))))
+  return U,S,V
 end
 
 function _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, cutoff, maxdim) 
@@ -214,11 +215,13 @@ function _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, c
 end
 
 function _krylov_svd_solve(
-  envMap, left_ind; maxdim, cutoff, kwargs...
+  envMap, left_ind; maxdim, cutoff, envflux, kwargs...
 )
   maxdim = min(maxdim, 15)
   # @show maxdim
   envMapDag = adjoint(envMap)
+  #@show storage(contract(envMapDag))
+  #@show storage(contract(envMap))
 
   if !hasqns(left_ind)
     trial = randomITensor(eltype(envMap), left_ind)
@@ -268,16 +271,17 @@ function _krylov_svd_solve(
 
       try
         vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-          (x -> noprime(envMap * x), y -> noprime(envMapDag * y)), trial,
+          (x -> (noprime((envMap) * x)), y -> (noprime(envMapDag * y))), trial,
         )
       catch e 
         @show e
         return _svd_solve_normal(envMap, left_ind; maxdim, cutoff)
       end
-
+      #@show storage(rvecs[1])
+      #@show storage(dag(rvecs[1]))
       push!(vals_col,  vals)
       push!(lvecs_col, lvecs)
-      push!(rvecs_col, rvecs)
+      push!(rvecs_col, conj.(dag.(rvecs)))  ###is the conjugate here justified or not?
       push!(remainingSpaces, s)
       append!(d, vals)
     end
@@ -287,7 +291,7 @@ function _krylov_svd_solve(
 
     (length(vals_col) == 0) && return nothing,nothing,nothing
 
-    U,S,V = _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces)
+    U,S,V = _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces;envflux=envflux)
   end
 
   return U,S,V
@@ -312,7 +316,7 @@ function _two_site_expand_core(
   # compute nullspace to the left and right 
   NL = nullspace(psi1, linkind_l; atol=atol)
   NR = nullspace(psi2, linkind_r; atol=atol)
-
+  
   # if nullspace is empty (happen's for product states with QNs)
   (norm(NL) == 0.0 || norm(NR) == 0.0) && return psi, phi, PH
 
@@ -327,17 +331,16 @@ function _two_site_expand_core(
   ininds = uniqueinds(NR,psi2)
   outinds = uniqueinds(NL,psi1)
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([NL,PHn1,PHn2,NR], outinds, ininds)
-
-  norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-13 && return psi, phi, PH
-
-  U,S,V= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+  envMapc = ITensors.ITensorNetworkMaps.contract(envMap)
+  
+  norm(envMapc) ≤ 1e-13 && return psi, phi, PH
+  U,S,V= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff,envflux=flux(envMapc))
   isnothing(U) && return psi, phi, PH
 
   @assert dim(commonind(U, S)) ≤ maxdim
 
   NL *= dag(U)
   NR *= dag(V)
-
   # expand current site tensors
   new_psi1, newl = ITensors.directsum(
     psi1 => uniqueinds(psi1, NL), dag(NL) => uniqueinds(NL, psi1); tags=(tags(commonind(psi1,phi)),)
@@ -428,11 +431,10 @@ function _full_expand_core(
   outinds = commoninds(nullVec, PHn1)
   ininds = adjoint.(outinds)
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([PHn1,PHn2,prime(dag(PHn1))], ininds, outinds)
-
-  norm(ITensors.ITensorNetworkMaps.contract(envMap)) ≤ 1e-13 && return psi,phi,PH
-
+  envMapc=ITensors.ITensorNetworkMaps.contract(envMap)
+  norm(envMapc) ≤ 1e-13 && return psi,phi,PH
   # svd-decomposition
-  U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+  U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff,envflux=flux(envMap))
   isnothing(U) && return psi,phi,PH
 
   @assert dim(commonind(U, S)) ≤ maxdim
