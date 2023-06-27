@@ -14,8 +14,9 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
     (typeof(pos(sweep_step))!=NamedEdge{Int}) && return psi, phi, PH
 
     # determine which expansion method and svd method to use
+    #@show expander_backend, expander_backend=="two_site"
     if expander_backend == "none"
-      return psi, PH
+      return psi, phi, PH
     elseif expander_backend == "full"
       _expand_core = _full_expand_core
     elseif expander_backend == "two_site"
@@ -62,7 +63,7 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
 end
 
 function _svd_solve_normal(
-  envMap, left_ind; maxdim, cutoff, kwargs...
+  envMap, left_ind; maxdim, cutoff, envflux, kwargs...
 )
   U, S, V = svd(
     ITensors.ITensorNetworkMaps.contract(envMap),
@@ -127,7 +128,7 @@ end
 
 function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces;envflux)
   # attach trivial index to left/right eigenvectors to take directsum over it
-  @show envflux
+  #@show envflux
   lvecs_col = map(zip(remainingSpaces,lvecs_col)) do (s,lvecs)
     return map(lvecs) do lvec 
       dummy_ind = Index(Pair(first(s),1); tags="u", dir=ITensors.In)
@@ -275,7 +276,7 @@ function _krylov_svd_solve(
         )
       catch e 
         @show e
-        return _svd_solve_normal(envMap, left_ind; maxdim, cutoff)
+        return _svd_solve_normal(envMap, left_ind; maxdim, cutoff,envflux)
       end
       #@show storage(rvecs[1])
       #@show storage(dag(rvecs[1]))
@@ -370,12 +371,14 @@ function _two_site_expand_core(
     v = phi[I]
     !iszero(v) && (return new_phi[I]=v)
   end
-
+  old_twosite_tensor=psi[n2]*phi*psi[n1]
+  
   psi[n2] = new_psi2*Cr
   psi[n1] = noprime(new_psi1*Cl)
-
+  
   new_phi = dag(Cl)*new_phi*dag(Cr)
-
+  @assert norm(psi[n2]*new_phi*psi[n1] - old_twosite_tensor)<=1e-10
+  
   return psi, new_phi, PH
 end
 
@@ -434,7 +437,7 @@ function _full_expand_core(
   envMapc=ITensors.ITensorNetworkMaps.contract(envMap)
   norm(envMapc) ≤ 1e-13 && return psi,phi,PH
   # svd-decomposition
-  U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff,envflux=flux(envMap))
+  U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff,envflux=flux(envMapc))
   isnothing(U) && return psi,phi,PH
 
   @assert dim(commonind(U, S)) ≤ maxdim
@@ -461,9 +464,11 @@ function _full_expand_core(
     v = phi[I]
     !iszero(v) && (return new_phi[I]=v)
   end
-
+  old_twosite_tensor=psi[n2]*phi*psi[n1]
   psi[n1] = noprime(new_psi*Cl)
-
+  #@show norm(psi[n2]*(dag(Cl)*new_phi)*psi[n1] - old_twosite_tensor)
+  @assert norm(psi[n2]*(dag(Cl)*new_phi)*psi[n1] - old_twosite_tensor)<=1e-13
+  
   return psi, dag(Cl)*new_phi, PH
 end
 

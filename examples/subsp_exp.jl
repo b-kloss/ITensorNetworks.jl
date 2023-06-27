@@ -5,8 +5,8 @@ using ITensorNetworks
 using ITensorUnicodePlots
 using Observers
 using HDF5
-
-include("observer.jl")
+using Random
+include("observer.jl.bk")
 
 ## rung decoupled heisenberg chain model ##
 function rung_decoupl_heisenberg(N; J1=1.0, J2=0.5)
@@ -25,8 +25,9 @@ function rung_decoupl_heisenberg(N; J1=1.0, J2=0.5)
 end
 
 let
-  tmax = 2.
-  dt = 0.1
+  Random.seed!(1234)
+  tmax = 0.3
+  dt = 0.01
   N = 10
 
   # g = named_binary_tree(3)
@@ -34,9 +35,9 @@ let
 
   # with QNs
   s = siteinds("S=1", N; conserve_qns=true)
-  ψ = random_mps(s; states=(x-> isodd(x) ? "Up" : "Dn"), internal_inds_space=4)
-  #ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
-  model = heisenberg(chain_lattice_graph(N); J1= 1., h = 0.)
+  #ψ = random_mps(s; states=(x-> isodd(x) ? "Up" : "Dn"), internal_inds_space=4)
+  ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
+  model = heisenberg(chain_lattice_graph(N); J1= 1.,h = 0.)
   H = mpo(model, s)
 
   # without Qns
@@ -48,7 +49,7 @@ let
   # H = TTN(model, s)
 
   obs1 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) # "xPol" => return_x, 
-  obs2 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) # "xPol" => return_x, 
+  obs2 = Observer("time" => current_time, "xPol" => return_z_half) #, "en" => return_en) # "xPol" => return_x, 
   obs3 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) # "xPol" => return_x, 
 
   ################### DMRG #################
@@ -65,15 +66,17 @@ let
   ################### TDVP #################
 
   D = 50
-  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=1e-4, outputlevel=1, nsite=1,)
+  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=1e-10, outputlevel=1, nsite=1,)
   expander_cache=Any[]
 
   println("============== 1-site TDVP with 2-site subspace expansion ====================")
-
-  # ϕ1 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
-  #           expand="2-site", 
-  #           (observer!)=obs1,
-  #      )
+  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=1e-5, outputlevel=1, nsite=1,solver="none")
+  
+   ϕ1 = tdvp(H, -im*dt, ψ; tdvp_kwargs..., 
+             expander_backend="full",
+             svd_backend="svd",
+             (observer!)=obs1,
+       )
   # @time begin
   # ϕ1 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
   #           # expand="2-site", 
@@ -83,17 +86,17 @@ let
   #      )
 
   # println("============== 1-site TDVP with full subspace expansion ====================")
-
-  ϕ2 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
+  @show tdvp_kwargs
+  ϕ2 = tdvp(H, -im*tmax, ϕ1; tdvp_kwargs..., 
             # expand="full", 
-            expander_backend="two_site", 
-            svd_backend="krylov", 
+            expander_backend="full", 
+            svd_backend="svd", 
             expander_cache=expander_cache,
             (observer!)=obs2,
        )
 
   # println("============== 1-site TDVP with krylov subspace expansion ====================")
-
+  @show obs2
   # @time begin
   # ϕ3 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
   #           expand="full", 
