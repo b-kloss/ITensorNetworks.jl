@@ -28,6 +28,36 @@ function exponentiate_solver(; kwargs...)
   return solver
 end
 
+function dummy_solver(; kwargs...)
+  function solver(
+    H,
+    init;
+    ishermitian=true,
+    issymmetric=true,
+    solver_krylovdim=30,
+    solver_maxiter=100,
+    solver_outputlevel=0,
+    solver_tol=1E-12,
+    substep,    
+    time_step,
+    kws...,
+  )
+    solver_kwargs = (;
+      ishermitian,
+      issymmetric,
+      tol=solver_tol,
+      krylovdim=solver_krylovdim,
+      maxiter=solver_maxiter,
+      verbosity=solver_outputlevel,
+      eager=true,
+    )
+
+    psi, info = KrylovKit.exponentiate(H, 0.0, init; solver_kwargs...)
+    return psi, info
+  end
+  return solver
+end
+
 function applyexp_solver(; kwargs...)
   function solver(
     H,
@@ -55,6 +85,9 @@ function tdvp_solver(; solver_backend="exponentiate", kwargs...)
     return exponentiate_solver(; kwargs...)
   elseif solver_backend == "applyexp"
     return applyexp_solver(; kwargs...)
+  elseif solver_backend == "none"
+    return dummy_solver(; kwargs...)
+ 
   else
     error(
       "solver_backend=$solver_backend not recognized (options are \"applyexp\" or \"exponentiate\")",
