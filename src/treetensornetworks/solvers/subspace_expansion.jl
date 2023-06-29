@@ -81,24 +81,6 @@ function _svd_solve_normal(
   return U,S,V
 end
 
-function _kkit_init_check(u₀,theadj,thenormal)
-  β₀ = norm(u₀)
-  iszero(β₀) && throw(ArgumentError("initial vector should not have norm zero"))
-  v₀ = noprime(theadj(u₀))
-  α = norm(v₀) / β₀
-  Av₀ = noprime(thenormal(v₀)) # apply operator
-  α² = dot(u₀, Av₀) / β₀^2
-
-  if norm(α²) < eps(Float64)
-    return false
-  else
-    # @show α²
-    # @show α * α
-    α² ≈ α * α || throw(ArgumentError("operator and its adjoint are not compatible"))
-  end
-  return true
-end
-
 function _build_USV_without_QN(vals, lvecs, rvecs)
 
   # attach trivial index to left/right eigenvectors to take directsum over it
@@ -128,7 +110,6 @@ end
 
 function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces;envflux)
   # attach trivial index to left/right eigenvectors to take directsum over it
-  #@show envflux
   lvecs_col = map(zip(remainingSpaces,lvecs_col)) do (s,lvecs)
     return map(lvecs) do lvec 
       dummy_ind = Index(Pair(first(s),1); tags="u", dir=ITensors.In)
@@ -141,7 +122,6 @@ function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces;envf
       rvec=rvec 
       dummy_ind = Index(Pair(envflux-first(s),1); tags="v", dir=ITensors.In)
       res = ITensor(array(rvec), inds(rvec)..., dummy_ind)
-      # @show flux(res)
       return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
     end
   end
@@ -219,10 +199,7 @@ function _krylov_svd_solve(
   envMap, left_ind; maxdim, cutoff, envflux, kwargs...
 )
   maxdim = min(maxdim, 15)
-  # @show maxdim
   envMapDag = adjoint(envMap)
-  #@show storage(contract(envMapDag))
-  #@show storage(contract(envMap))
 
   if !hasqns(left_ind)
     trial = randomITensor(eltype(envMap), left_ind)
@@ -278,8 +255,6 @@ function _krylov_svd_solve(
         @show e
         return _svd_solve_normal(envMap, left_ind; maxdim, cutoff,envflux)
       end
-      #@show storage(rvecs[1])
-      #@show storage(dag(rvecs[1]))
       push!(vals_col,  vals)
       push!(lvecs_col, lvecs)
       push!(rvecs_col, conj.(dag.(rvecs)))  ###is the conjugate here justified or not?
@@ -361,11 +336,12 @@ function _two_site_expand_core(
     new_phi=ITensor(eltype(phi),flux(phi),dag(newr)...,dag(newl)...)
     fill!(new_phi,0.0)
   else
-    new_phi = ITensor(eltype(phi), dag(newr)...,dag(newl)...)
+    new_phi = ITensor(eltype(phi), dag(newl)...,dag(newr)...)
   end
-
-  # @show nzblocks(phi)
-  # @show nzblocks(new_phi)
+  # @show inds(phi)
+  # @show newl
+  # @show newr
+  # @show inds(new_phi)
 
   map(eachindex(phi)) do I
     v = phi[I]
@@ -377,8 +353,20 @@ function _two_site_expand_core(
   psi[n1] = noprime(new_psi1*Cl)
   
   new_phi = dag(Cl)*new_phi*dag(Cr)
+  # println("===========================================================================")
+  # @show psi1
+  # @show psi2
+  # @show phi
+  # println("===========================================================================")
+  # @show psi[n1]
+  # @show psi[n2]
+  # @show new_phi
+  # println("===========================================================================")
+  # @show new_phi
+
+  # @show norm(psi[n2]*new_phi*psi[n1] - old_twosite_tensor)
   @assert norm(psi[n2]*new_phi*psi[n1] - old_twosite_tensor)<=1e-10
-  
+ 
   return psi, new_phi, PH
 end
 
@@ -454,10 +442,10 @@ function _full_expand_core(
 
   # zero-pad bond-tensor (the orthogonality center)
   if hasqns(phi)
-    new_phi=ITensor(eltype(phi),flux(phi),commonind(phi,psi2),dag(newl)...)
+    new_phi=ITensor(eltype(phi),flux(phi),dag(newl)...,commonind(phi,psi2))
     fill!(new_phi,0.0)
   else
-    new_phi = ITensor(eltype(phi),commonind(phi,psi2),dag(newl)...)
+    new_phi = ITensor(eltype(phi),dag(newl)...,commonind(phi,psi2))
   end
 
   map(eachindex(phi)) do I
@@ -466,7 +454,6 @@ function _full_expand_core(
   end
   old_twosite_tensor=psi[n2]*phi*psi[n1]
   psi[n1] = noprime(new_psi*Cl)
-  #@show norm(psi[n2]*(dag(Cl)*new_phi)*psi[n1] - old_twosite_tensor)
   @assert norm(psi[n2]*(dag(Cl)*new_phi)*psi[n1] - old_twosite_tensor)<=1e-13
   
   return psi, dag(Cl)*new_phi, PH
