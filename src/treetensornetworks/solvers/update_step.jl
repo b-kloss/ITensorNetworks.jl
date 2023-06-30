@@ -193,10 +193,12 @@ function local_update(
   kwargs...,
 )
 
+  # @time begin
   psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
   psi, phi = extract_local_tensor(psi, pos(sweep_step))
   PH = set_nsite(PH, nsite(sweep_step))
   PH = position(PH, psi, pos(sweep_step))
+  # end
 
   # @show pos(sweep_step)
   psi,phi,PH = expander(

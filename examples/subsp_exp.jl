@@ -62,24 +62,25 @@ let
   J = -1.
   g = -1.
   tau = 0.1
+  D = 40
 
   # g = named_binary_tree(3)
   # g = named_grid((12,1))
 
   # with QNs
-  s = siteinds("S=1", N; conserve_qns=true)
-  # ψ = random_mps(s; states=(x-> isodd(x) ? "Up" : "Dn"), internal_inds_space=1)
-  ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=2)
-  model = heisenberglin(N)
-  H = mpo(model, s)
+  # s = siteinds("S=1", N; conserve_qns=true)
+  # # ψ = random_mps(s; states=(x-> isodd(x) ? "Up" : "Dn"), internal_inds_space=1)
+  # ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
+  # model = heisenberglin(N)
+  # H = mpo(model, s)
 
   # without Qns
-  # g = chain_lattice_graph(N)
-  # s = siteinds("S=1/2", g)
-  # # ψ = TTN(ITensorNetwork(s, x->isodd(x) ? "Up" : "Dn"))
-  # ψ = TTN(ITensorNetwork(s, "Up"))
-  # model = isinglin(N; J=-1., g=-1.) 
-  # H = TTN(model, s)
+  g = chain_lattice_graph(N)
+  s = siteinds("S=1/2", g)
+  # ψ = TTN(ITensorNetwork(s, x->isodd(x) ? "Up" : "Dn"))
+  ψ = TTN(ITensorNetwork(s, "Up"))
+  model = isinglin(N; J=-1., g=-1.) 
+  H = TTN(model, s)
 
   # rung-decoupled Heisenberg without Qns
   # g = chain_lattice_graph(N)
@@ -87,10 +88,19 @@ let
   # ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
   # model = rung_decoupl_heisenberg(N)
   # H = mpo(model, s)
+  #
+  model_name = "ising"
 
-  # obs1 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) # "xPol" => return_x, 
-  # obs2 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) # "xPol" => return_x, 
-  obs3 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) # "xPol" => return_x, 
+  obs1 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en)
+  obs2 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en)
+  obs3 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
+  obs4 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
+  obs5 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
+  name_obs1 = "data/"*model_name*"_two_site_svd_N=$(N)_D=$(D)"
+  name_obs2 = "data/"*model_name*"_two_site_krylov_N=$(N)_D=$(D)"
+  name_obs3 = "data/"*model_name*"_full_svd_N=$(N)_D=$(D)"
+  name_obs4 = "data/"*model_name*"_full_krylov_N=$(N)_D=$(D)"
+  name_obs5 = "data/"*model_name*"_two_site_general_N=$(N)_D=$(D)"
 
   ################### DMRG #################
 
@@ -104,11 +114,9 @@ let
 
   ################### TDVP #################
 
-  D = 40
   tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=1e-14, outputlevel=1, cutoff_compress=0)
-  expander_cache=Any[]
 
-  println("============== 1-site TDVP with 2-site subspace expansion ====================")
+  println("================================================================")
 
   # ϕ1 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
   #           expander_backend="two_site", 
@@ -117,8 +125,9 @@ let
   #           # expander_cache=expander_cache,
   #           (observer!)=obs1,
   #      )
+  # savedata(name_obs1, obs1)
   #
-  # println("============== 2-site TDVP ====================")
+  # println("================================================================")
   #
   # Random.seed!(1234)
   #
@@ -129,23 +138,44 @@ let
   #           # expander_cache=expander_cache,
   #           (observer!)=obs2,
   #      )
-
-  # println("============== 1-site TDVP with full subspace expansion ====================")
-
-  ϕ3 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
-            expander_backend="two_site", 
-            svd_backend="krylov",
-            nsite=1,
-            expander_cache=expander_cache,
-            (observer!)=obs3,
-       )
-
-  name_obs1 = "data/heisenbergqns_two_site_svd_N=$(N)_D=$(D)"
-  name_obs2 = "data/heisenbergqns_two_site_krylov_N=$(N)_D=$(D)"
-  name_obs3 = "data/ising_full_svd_N=$(N)_D=$(D)"
-  # savedata(name_obs1, obs1)
   # savedata(name_obs2, obs2)
-  # savedata(name_obs2, obs3)
+
+  println("================================================================")
+
+  # expander_cache=Any[]
+  # ϕ3 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
+  #           expander_backend="full", 
+  #           svd_backend="svd",
+  #           nsite=1,
+  #           expander_cache=expander_cache,
+  #           (observer!)=obs3,
+  #      )
+  # savedata(name_obs3, obs3)
+
+  println("================================================================")
+
+  # expander_cache=Any[]
+  # ϕ4 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
+  #           expander_backend="full", 
+  #           svd_backend="krylov",
+  #           nsite=1,
+  #           expander_cache=expander_cache,
+  #           (observer!)=obs4,
+  #      )
+  # savedata(name_obs4, obs4)
+
+  println("================================================================")
+
+  expander_cache=Any[]
+  ϕ5 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
+            expander_backend="none", 
+            svd_backend="krylov",
+            nsite=2,
+            # expander_cache=expander_cache,
+            (observer!)=obs5,
+       )
+  savedata(name_obs5, obs5)
+
 end
 nothing
 # using Revise

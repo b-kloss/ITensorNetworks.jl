@@ -65,7 +65,7 @@ end
 function _svd_solve_normal(
   envMap, left_ind; maxdim, cutoff, envflux, kwargs...
 )
-  U, S, V = svd(
+  U,S,V = svd(
     ITensors.ITensorNetworkMaps.contract(envMap),
     left_ind;
     maxdim,
@@ -200,6 +200,8 @@ function _krylov_svd_solve(
 )
   maxdim = min(maxdim, 15)
   envMapDag = adjoint(envMap)
+  # @show inds(ITensors.ITensorNetworkMaps.contract(envMap))
+  # @show inds(ITensors.ITensorNetworkMaps.contract(envMapDag))
 
   if !hasqns(left_ind)
     trial = randomITensor(eltype(envMap), left_ind)
@@ -237,6 +239,8 @@ function _krylov_svd_solve(
 
       theqn=first(s)
       trial = randomITensor(eltype(envMap), theqn, left_ind)
+      # @show inds(trial)
+      # @show inds(envMapDag*trial)
 
       ##some checks to not pass singular/zero-size problem to KrylovKit
       adjtrial=envMapDag(trial)
@@ -249,7 +253,7 @@ function _krylov_svd_solve(
 
       try
         vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-          (x -> (noprime((envMap) * x)), y -> (noprime(envMapDag * y))), trial,
+          (x -> (noprime((envMap) * x)), y -> (envMapDag * y)), trial,
         )
       catch e 
         @show e
@@ -317,6 +321,7 @@ function _two_site_expand_core(
 
   NL *= dag(U)
   NR *= dag(V)
+
   # expand current site tensors
   new_psi1, newl = ITensors.directsum(
     psi1 => uniqueinds(psi1, NL), dag(NL) => uniqueinds(NL, psi1); tags=(tags(commonind(psi1,phi)),)
@@ -338,10 +343,6 @@ function _two_site_expand_core(
   else
     new_phi = ITensor(eltype(phi), dag(newl)...,dag(newr)...)
   end
-  # @show inds(phi)
-  # @show newl
-  # @show newr
-  # @show inds(new_phi)
 
   map(eachindex(phi)) do I
     v = phi[I]
@@ -353,18 +354,6 @@ function _two_site_expand_core(
   psi[n1] = noprime(new_psi1*Cl)
   
   new_phi = dag(Cl)*new_phi*dag(Cr)
-  # println("===========================================================================")
-  # @show psi1
-  # @show psi2
-  # @show phi
-  # println("===========================================================================")
-  # @show psi[n1]
-  # @show psi[n2]
-  # @show new_phi
-  # println("===========================================================================")
-  # @show new_phi
-
-  # @show norm(psi[n2]*new_phi*psi[n1] - old_twosite_tensor)
   @assert norm(psi[n2]*new_phi*psi[n1] - old_twosite_tensor)<=1e-10
  
   return psi, new_phi, PH
@@ -419,11 +408,19 @@ function _full_expand_core(
   PHn2 = map(e -> PH2.environments[NamedEdge(e)], [v => n2 for v in neighbors(g, n2) if v != n1])
   PHn2 = reduce(*, PHn2, init=(psi2*PH2.H[n2]*prime(dag(psi2))))
 
-  outinds = commoninds(nullVec, PHn1)
-  ininds = adjoint.(outinds)
-  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([PHn1,PHn2,prime(dag(PHn1))], ininds, outinds)
+  outinds = uniqueinds(nullVec,psi1)
+  ininds = dag.(outinds)
+  # @show ininds
+  # @show outinds
+  # @show inds(nullVec)
+  # @show inds(dag(nullVec))
+  # @show inds(adjoint(dag(nullVec)))
+  # @show inds(noprime(adjoint(dag(nullVec))))
+
+  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([PHn1,PHn2,prime(dag(PHn1))] , outinds, ininds)
   envMapc=ITensors.ITensorNetworkMaps.contract(envMap)
   norm(envMapc) ≤ 1e-13 && return psi,phi,PH
+
   # svd-decomposition
   U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff,envflux=flux(envMapc))
   isnothing(U) && return psi,phi,PH
@@ -442,7 +439,7 @@ function _full_expand_core(
 
   # zero-pad bond-tensor (the orthogonality center)
   if hasqns(phi)
-    new_phi=ITensor(eltype(phi),flux(phi),dag(newl)...,commonind(phi,psi2))
+    new_phi=ITensor(eltype(phi),flux(phi),commonind(phi,psi2),dag(newl)...)
     fill!(new_phi,0.0)
   else
     new_phi = ITensor(eltype(phi),dag(newl)...,commonind(phi,psi2))
@@ -466,8 +463,9 @@ function _kkit_init_check(u₀,theadj,thenormal)
   α = norm(v₀) / β₀
   Av₀ = thenormal(v₀) # apply operator
   α² = dot(u₀, Av₀) / β₀^2
-  #@show α², α * α
-  #@show norm(α²),eps(Float64)
+  # @show inds(u₀)
+  # @show inds(v₀)
+  # @show inds(Av₀)
   if norm(α²) < eps(Float64)
     return false
   else
