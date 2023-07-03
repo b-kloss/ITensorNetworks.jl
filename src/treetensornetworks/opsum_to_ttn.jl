@@ -493,7 +493,7 @@ function sorteachterm(os::OpSum, sites::IndsNetwork{V,<:Index}, root_vertex::V) 
         ITensors.which_op(t[n]), only(sites[currsite])
       )
       if !ITensors.using_auto_fermion() && (parity == -1) && (currsite < prevsite)
-        error("No verified fermion support for automatic TTN constructor!") # no verified support, just throw error
+        #error("No verified fermion support for automatic TTN constructor!") # no verified support, just throw error
         # Put local piece of Jordan-Wigner string emanating
         # from fermionic operators to the right
         # (Remaining F operators will be put in by svdMPO)
@@ -502,7 +502,7 @@ function sorteachterm(os::OpSum, sites::IndsNetwork{V,<:Index}, root_vertex::V) 
       prevsite = currsite
 
       if fermionic
-        error("No verified fermion support for automatic TTN constructor!") # no verified support, just throw error
+        #error("No verified fermion support for automatic TTN constructor!") # no verified support, just throw error
         parity = -parity
       else
         # Ignore bosonic operators in perm
