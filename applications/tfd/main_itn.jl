@@ -61,7 +61,7 @@ function set_threading(threading)
   end
 let
 #outf="data.h5"
-use_MPI = MPI.Comm_size==1 ? false : true
+use_MPI = MPI.Comm_size(comm)==1 ? false : true
 set_threading(threading)
 @show N,omega,boson_dim
 
