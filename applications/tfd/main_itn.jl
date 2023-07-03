@@ -94,7 +94,7 @@ if rank==root
   close(outfid)
 end
 
-tdvp_kwargs = (time_step = -im*tdvp_dt, reverse_step=true, normalize=true, maxdim=Main.params.chi, cutoff=tdvp_cutoff, outputlevel=1, cutoff_compress=1e-14)
+tdvp_kwargs = (time_step = -im*tdvp_dt, reverse_step=true, normalize=true, maxdim=Main.params.chi, cutoff=tdvp_cutoff, outputlevel=MPI.Comm_rank(comm)==root ? 1 : 0, cutoff_compress=1e-14)
 
 phys_bos = siteinds("MyBoson", N,dim=boson_dim,conserve_qns=true,conserve_number=false,)
 ancs_bos = siteinds("MyBoson", N,dim=boson_dim, conserve_qns=true,conserve_number=false)
@@ -179,7 +179,7 @@ Nphys_sites=div(length(ψ),stride)
 H = MPO(opsum,sites)
 Htn = TTN(opsum,sites_tn)
 expander_cache=Any[]
-tdvp_kwargs = (time_step = -im*tdvp_dt, reverse_step=true, normalize=true, maxdim=Main.params.chi, cutoff=tdvp_cutoff, outputlevel=1, cutoff_compress=1e-12)
+tdvp_kwargs = (time_step = -im*tdvp_dt, reverse_step=true, normalize=true, maxdim=Main.params.chi, cutoff=tdvp_cutoff, outputlevel=MPI.Comm_rank(comm)==root ? 1 : 0, cutoff_compress=1e-12)
 
 PH=ProjTTN(Htn)
 ψ0tn=deepcopy(ψtn)
@@ -208,7 +208,7 @@ else
         allgf = measure_autocorr(ψtn)
     end
 end
-    @show allgf
+    #@show allgf
 if use_MPI
     E = inner(ψ',H,ψ)
     #allgf=MPI.Gather(gf, root,comm)
@@ -257,7 +257,7 @@ for i in range(1,total_Nsteps*5)
     else
         allgf = measure_autocorr(ψtn)
     end
-    @show allgf
+    #@show allgf
   end
 
   if rank==root
