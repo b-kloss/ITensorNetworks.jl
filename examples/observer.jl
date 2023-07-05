@@ -1,4 +1,3 @@
-
 # util function to save data in obs
 function savedata(name::String, obs)
   name == "" && return
@@ -11,6 +10,43 @@ function savedata(name::String, obs)
       end
     end 
   end
+end
+
+function MPS(psi::TTN)
+    if !is_path_graph(siteinds(psi))
+        error("Trying to convert to MPS although TTN is not a path graph. Exiting.")
+    end
+    orts=ortho_center(psi)
+    sort!(orts)
+    ortrange=first(orts):last(orts)
+    
+    psimps=ITensors.MPS([psi[i] for i in 1:nv(psi)])
+    ITensors.set_ortho_lims!(psimps,ortrange)
+    return psimps
+end
+
+# overload expect function to be more efficient for TTNs
+function expect(
+  op::String,
+  ψ::ITensorNetworks.AbstractTreeTensorNetwork;
+  cutoff=nothing,
+  maxdim=nothing,
+  ortho=false,
+  sequence=nothing,
+  vertices=vertices(ψ),
+)
+  ψC = copy(ψ)
+  s = siteinds(ψ)
+  ElT = ITensorNetworks.promote_itensor_eltype(ψ)
+  res = Dictionary(vertices, Vector{ElT}(undef, length(vertices)))
+
+  for v in vertices
+    O = ITensor(Op(op, v), s)
+    ψC = orthogonalize(ψC, v)
+    ψCv = ψC[v]
+    res[v] = inner(ψCv, apply(O, ψCv)) / inner(ψCv, ψCv)
+  end
+  return res
 end
 
 # Define observer
@@ -39,9 +75,35 @@ end
 function return_z(; psi, bond, half_sweep)
   if bond == 1 && half_sweep ==2
     expec = expect("Sz", psi)
+    return real.(collect(expec))
+  end
+  return nothing
+end
+
+function return_z_mps(; psi, bond, half_sweep)
+  if bond == 1 && half_sweep ==2
+    expec = ITensors.expect(MPS(psi), "Sz")
+    return real.(collect(expec))
+  end
+  return nothing
+end
+
+function return_z_mean(; psi, bond, half_sweep)
+  if bond == 1 && half_sweep ==2
+    expec = expect("Sz", psi)
     return real(sum(expec)/length(expec))
   end
   return nothing
+end
+
+function return_z_half(; psi, bond, half_sweep)
+  if bond == 1 && half_sweep ==2
+    half_len = floor(Int, length(vertices(psi))/2)
+    expec = expect("Sz", psi; vertices=half_len)
+    return real(sum(expec)/length(expec))
+  end
+  return nothing
+
 end
 
 function return_en(; psi, PH, bond, half_sweep)
@@ -52,36 +114,24 @@ function return_en(; psi, PH, bond, half_sweep)
   return nothing
 end
 
-# function return_dw(; psi, bond, half_sweep)
-# if bond == 1 && half_sweep ==2
-#     xxcorr = correlation_matrix(psi, "X","X")
-#     D = 0
-#     for bond in nearest_neighboursy(L, snake_curve(L))
-#         D += 0.5 * (1 - xxcorr[bond[1],bond[2]])
-#     end
-#     return real(D)
-# end
-# return nothing
-# end
-
-# function return_entropy(; psi, bond, half_sweep)
-# if bond == 1 && half_sweep ==2
-#     pos = Int(N/2)
-#     psi_ = orthogonalize(psi, pos)
-#     _,S,_ = svd(psi_[pos], (commonind(psi_[pos-1], psi_[pos]), siteind(psi_,pos)))
-#     SvN = 0
-#     for n=1:dim(S,1)
-#         p = S[n,n]^2
-#         SvN -= p*log(p)
-#     end
-#     return SvN
-# end
-# return nothing
-# end
-
 function return_state(; psi, bond, half_sweep)
+  if bond == 1 && half_sweep ==2
+      return psi
+  end
+  return nothing
+end
+
+function return_entropy(; psi, bond, half_sweep)
 if bond == 1 && half_sweep ==2
-    return psi
+    pos = floor(Int, length(vertices(psi))/2)
+    psi_ = orthogonalize(psi, pos)
+    _,S,_ = svd(psi_[pos], (commonind(psi_[pos-1], psi_[pos]), filter(i->hastags(i, "Site"), inds(psi_[pos]))))
+    SvN = 0
+    for n=1:dim(S,1)
+        p = S[n,n]^2
+        SvN -= p*log(p)
+    end
+    return SvN
 end
 return nothing
 end

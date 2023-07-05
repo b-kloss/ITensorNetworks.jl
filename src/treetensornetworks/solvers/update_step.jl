@@ -89,20 +89,20 @@ function update_sweep(
     )
     maxtruncerr = isnothing(spec) ? maxtruncerr : max(maxtruncerr, spec.truncerr)
     if outputlevel >= 2
-      # if time_direction(sweep_step) == +1
-      #   @printf("Sweep %d, direction %s, position (%s,) \n", sw, direction, 1) #pos(step))
-      # end
-      # print("  Truncated using")
-      # @printf(" cutoff=%.1E", cutoff)
-      # @printf(" maxdim=%.1E", maxdim)
-      # print(" mindim=", mindim)
-      # print(" current_time=", round(current_time; digits=3))
-      # println()
+      if time_direction(sweep_step) == +1
+        @printf("Sweep %d, direction %s, position (%s,) \n", sw, direction, 1) #pos(step))
+      end
+      print("  Truncated using")
+      @printf(" cutoff=%.1E", cutoff)
+      @printf(" maxdim=%.1E", maxdim)
+      print(" mindim=", mindim)
+      print(" current_time=", round(current_time; digits=3))
+      println()
       # if spec != nothing
       if typeof(pos(sweep_step)) == NamedEdge{Int}
         @printf(
           "  Trunc. err=%.2E, bond dimension %d\n",
-          # spec.truncerr,
+          spec.truncerr,
           0,
           linkdim(psi, edgetype(psi)(pos(sweep_step)))
         )
@@ -193,14 +193,15 @@ function local_update(
   kwargs...,
 )
 
-  # @time begin
   psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
   psi, phi = extract_local_tensor(psi, pos(sweep_step))
   PH = set_nsite(PH, nsite(sweep_step))
   PH = position(PH, psi, pos(sweep_step))
-  # end
 
+  # println("=================================================")
   # @show pos(sweep_step)
+  # phi_oldold = copy(phi)
+
   psi,phi,PH = expander(
     PH,
     psi,
@@ -211,19 +212,10 @@ function local_update(
     kwargs...,
   )
 
+  # phi_old= copy(phi)
+
   PH = set_nsite(PH, nsite(sweep_step))
   PH = position(PH, psi, pos(sweep_step))
-
-  # @show "startcheck PH"
-  # for env in PH.environments
-  #   for I in eachindex(env)
-  #     b = Block(I)
-  #     if NDTensors.hasblock(env.tensor, b)
-  #       @assert (flux(env) == flux(env, Tuple(I)...)) || iszero(env[I])
-  #     end
-  #   end
-  # end
-  # @show "endcheck PH"
 
   phi, info = solver(
     PH,
@@ -233,6 +225,15 @@ function local_update(
     outputlevel,
     kwargs...,
   )
+
+  # if pos(sweep_step) == NamedEdge(50 => 51)
+  #   @show phi
+  # end
+  # if(phi_old != phi_oldold)
+  #   @show phi_oldold
+  #   @show phi_old
+  #   @show phi
+  # end
 
   current_time += time_step
   normalize && (phi /= norm(phi))

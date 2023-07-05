@@ -14,7 +14,6 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
     (typeof(pos(sweep_step))!=NamedEdge{Int}) && return psi, phi, PH
 
     # determine which expansion method and svd method to use
-    #@show expander_backend, expander_backend=="two_site"
     if expander_backend == "none"
       return psi, phi, PH
     elseif expander_backend == "full"
@@ -33,6 +32,15 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
       error("svd_backend=$svd_backend not recognized (options are \"svd\" or \"krylov\")")
     end
 
+    # println("======================================================")
+    # @show pos(sweep_step)
+    # @show psi[src(pos(sweep_step))]
+    # @show psi[dst(pos(sweep_step))]
+    # @show phi
+    # @show (psi[dst(pos(sweep_step))] * phi * psi[src(pos(sweep_step))]) - (psi[src(pos(sweep_step))] * phi * psi[dst(pos(sweep_step))])
+    # @assert (psi[dst(pos(sweep_step))] * phi * psi[src(pos(sweep_step))]) ≈ (psi[src(pos(sweep_step))] * phi * psi[dst(pos(sweep_step))])
+
+
     # atol refers to the tolerance in nullspace determination (for finite MPS can probably be set rather small)
     # cutoff refers to largest singular value of gradient (acceleration of population gain of expansion vectors) to keep
     # this should be related to the cutoff in two-site TDVP: \Delta_rho_i = 0.5 * lambda_y * tau **2 
@@ -41,16 +49,6 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
     # between different QNs locally is static once bond dimension saturates maxdim.)
     
     cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
-    # @show "startcheck"
-    # for I in eachindex(phi)
-    #   b = Block(I)
-    #   v = phi[I]
-    #   # @show b
-    #   if NDTensors.hasblock(phi.tensor, b)
-    #     @assert flux(phi) == flux(phi, Tuple(I)...)
-    #   end
-    # end
-    # @show "endcheck"
 
     # get subspace expansion
     psi, phi, PH = _expand_core(
@@ -121,7 +119,6 @@ function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces;envf
     return map(rvecs) do rvec
       rvec=rvec 
       dummy_ind = Index(Pair(envflux-first(s),1); tags="v", dir=ITensors.In)
-      res = ITensor(array(rvec), inds(rvec)..., dummy_ind)
       return ITensor(array(rvec), inds(rvec)..., dummy_ind) => dummy_ind
     end
   end
@@ -155,6 +152,7 @@ function _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces;envf
   V,_ = reduce((x,y) -> ITensors.directsum(
     x, y; tags="v",
   ), rvecs_col[2:end]; init=rvecs_col[1])
+
   S = ITensors.diagITensor(vcat(vals_col...), filter(v->hastags(v, "u"), dag(inds(U))), filter(v->hastags(v, "v"), dag(inds(V))))
   return U,S,V
 end
@@ -200,8 +198,6 @@ function _krylov_svd_solve(
 )
   maxdim = min(maxdim, 15)
   envMapDag = adjoint(envMap)
-  # @show inds(ITensors.ITensorNetworkMaps.contract(envMap))
-  # @show inds(ITensors.ITensorNetworkMaps.contract(envMapDag))
 
   if !hasqns(left_ind)
     trial = randomITensor(eltype(envMap), left_ind)
@@ -239,8 +235,6 @@ function _krylov_svd_solve(
 
       theqn=first(s)
       trial = randomITensor(eltype(envMap), theqn, left_ind)
-      # @show inds(trial)
-      # @show inds(envMapDag*trial)
 
       ##some checks to not pass singular/zero-size problem to KrylovKit
       adjtrial=envMapDag(trial)
@@ -278,8 +272,10 @@ function _krylov_svd_solve(
 end
 
 function _two_site_expand_core(
-  PH, psi, phi, pos, svd_func; maxdim, cutoff, cutoff_compress, atol, kwargs...,
+  PH, psi_, phi_, pos, svd_func; maxdim, cutoff, cutoff_compress, atol, kwargs...,
 )
+  psi = deepcopy(psi_)
+  phi = deepcopy(phi_)
   n1, n2 = src(pos), dst(pos)
   g = underlying_graph(PH)
 
@@ -290,8 +286,12 @@ function _two_site_expand_core(
   # don't expand if we are already at maxdim
   (old_linkdim >= maxdim) && return psi, phi, PH
 
+
   linkind_l = commonind(psi1, phi)
   linkind_r = commonind(psi2, phi)
+  # @show inds(phi)
+  phi = permute(phi, (linkind_l, linkind_r))
+  # @show inds(phi)
 
   # compute nullspace to the left and right 
   NL = nullspace(psi1, linkind_l; atol=atol)
@@ -310,35 +310,47 @@ function _two_site_expand_core(
 
   ininds = uniqueinds(NR,psi2)
   outinds = uniqueinds(NL,psi1)
-  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([NL,PHn1,PHn2,NR], outinds, ininds)
+  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([NR,PHn2,PHn1,NL], outinds, ininds)
   envMapc = ITensors.ITensorNetworkMaps.contract(envMap)
   
   norm(envMapc) ≤ 1e-13 && return psi, phi, PH
-  U,S,V= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff,envflux=flux(envMapc))
+  U,S,V = svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff,envflux=flux(envMapc))
   isnothing(U) && return psi, phi, PH
+  # @show inds(NL)
+  # @show inds(NR)
+  # println("=====================================================")
+  # @show inds(U)
+  # @show inds(V)
+  # @show inds(S)
 
-  @assert dim(commonind(U, S)) ≤ maxdim
+  @assert dim(commonind(U, S)) ≤ maxdim-old_linkdim
 
   NL *= dag(U)
   NR *= dag(V)
+  # @show inds(dag(NL))
+  # @show inds(dag(NR))
+  # @show inds(psi1)
+  # @show inds(psi2)
 
   # expand current site tensors
   new_psi1, newl = ITensors.directsum(
-    psi1 => uniqueinds(psi1, NL), dag(NL) => uniqueinds(NL, psi1); tags=(tags(commonind(psi1,phi)),)
+                                      psi1 => uniqueinds(psi1, NL), dag(NL) => dag(uniqueinds(NL, psi1)); tags=(tags(commonind(psi1,phi)),)
   )
   Cl = combiner(newl; tags=tags(newl[1]), dir=dir(newl[1]))
 
   new_psi2, newr = ITensors.directsum(
-    psi2 => uniqueinds(psi2, NR), dag(NR) => uniqueinds(NR, psi2); tags=(tags(commonind(psi2,phi)),)
+                                      psi2 => uniqueinds(psi2, NR), dag(NR) => dag(uniqueinds(NR, psi2)); tags=(tags(commonind(psi2,phi)),)
   )
   Cr = combiner(newr; tags=tags(newr[1]), dir=dir(newr[1]))
+  # @show inds(new_psi1)
+  # @show inds(new_psi2)
 
   @assert dim(newl) <= maxdim
   @assert dim(newr) <= maxdim
 
   # zero-pad bond-tensor (the orthogonality center)
   if hasqns(phi)
-    new_phi=ITensor(eltype(phi),flux(phi),dag(newr)...,dag(newl)...)
+    new_phi=ITensor(eltype(phi),flux(phi),dag(newl)...,dag(newr)...)
     fill!(new_phi,0.0)
   else
     new_phi = ITensor(eltype(phi), dag(newl)...,dag(newr)...)
@@ -348,10 +360,14 @@ function _two_site_expand_core(
     v = phi[I]
     !iszero(v) && (return new_phi[I]=v)
   end
-  old_twosite_tensor=psi[n2]*phi*psi[n1]
+  # @show newl
+  # @show newr
+  # @show phi
+  old_twosite_tensor=psi_[n2]*phi_*psi_[n1]
   
   psi[n2] = new_psi2*Cr
   psi[n1] = noprime(new_psi1*Cl)
+  new_phi = permute(new_phi, (dag(newr)..., dag(newl)...))
   
   new_phi = dag(Cl)*new_phi*dag(Cr)
   @assert norm(psi[n2]*new_phi*psi[n1] - old_twosite_tensor)<=1e-10
@@ -410,12 +426,6 @@ function _full_expand_core(
 
   outinds = uniqueinds(nullVec,psi1)
   ininds = dag.(outinds)
-  # @show ininds
-  # @show outinds
-  # @show inds(nullVec)
-  # @show inds(dag(nullVec))
-  # @show inds(adjoint(dag(nullVec)))
-  # @show inds(noprime(adjoint(dag(nullVec))))
 
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([PHn1,PHn2,prime(dag(PHn1))] , outinds, ininds)
   envMapc=ITensors.ITensorNetworkMaps.contract(envMap)
