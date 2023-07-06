@@ -78,7 +78,8 @@ function update_sweep(
       expander,
       PH,
       psi,
-      sweep_step;
+      sweep_step,
+      direction;
       current_time,
       outputlevel,
       cutoff,
@@ -184,7 +185,8 @@ function local_update(
   expander,
   PH,
   psi,
-  sweep_step;   
+  sweep_step,
+  direction;   
   current_time,
   outputlevel,
   time_step,
@@ -192,30 +194,23 @@ function local_update(
   noise,
   kwargs...,
 )
+  # @show pos(sweep_step)
 
   psi = orthogonalize(psi, current_ortho(sweep_step)) # choose the one that is closest to previous ortho center?
   psi, phi = extract_local_tensor(psi, pos(sweep_step))
   PH = set_nsite(PH, nsite(sweep_step))
   PH = position(PH, psi, pos(sweep_step))
 
-  # println("=================================================")
-  # @show pos(sweep_step)
-  # phi_oldold = copy(phi)
-
   psi,phi,PH = expander(
     PH,
     psi,
     phi,
-    sweep_step;
+    sweep_step,
+    direction;
     maxdim,
     cutoff,
     kwargs...,
   )
-
-  # phi_old= copy(phi)
-
-  PH = set_nsite(PH, nsite(sweep_step))
-  PH = position(PH, psi, pos(sweep_step))
 
   phi, info = solver(
     PH,
@@ -226,13 +221,36 @@ function local_update(
     kwargs...,
   )
 
-  # if pos(sweep_step) == NamedEdge(50 => 51)
-  #   @show phi
-  # end
-  # if(phi_old != phi_oldold)
-  #   @show phi_oldold
-  #   @show phi_old
-  #   @show phi
+  if (typeof(pos(sweep_step)) != NamedEdge{Int})
+    n1 = pos(sweep_step)[1]
+    n2 = isforward(direction) ? n1+1 : n1-1
+
+    if n2 <= 100 && n2 > 0
+      m = 10
+      if dim(commonind(psi[n2],phi)) > m
+        PH = position(PH, psi, [n1,n2])
+        U,S,V = svd(phi*psi[n2], uniqueinds(phi,psi[n2]); maxdim=m, cutoff=0) #, lefttags = tags(commonind(psi[n2],phi)), righttags = tags(commonind(psi[n2],phi))) #, use_relative_cutoff=false, use_absolute_cutoff=true, kwargs...,)
+
+        psi[n2] = V
+        phi = U*S
+
+        PH = position(PH, psi, pos(sweep_step))
+      end
+    end
+  end
+
+  # if (typeof(pos(sweep_step)) == NamedEdge{Int})
+  #   (n1,n2) = (src(pos(sweep_step)),dst(pos(sweep_step)))
+  #   m = 5
+  #   if dim(commonind(psi[n1],phi)) > m
+  #     PH = position(PH, psi, [n1,n2])
+  #     U,S,V = svd(phi*psi[n2], uniqueinds(phi,psi[n2]); maxdim=m, cutoff=0) #, lefttags = tags(commonind(psi[n2],phi)), righttags = tags(commonind(psi[n2],phi))) #, use_relative_cutoff=false, use_absolute_cutoff=true, kwargs...,)
+  #
+  #     psi[n2] = V
+  #     phi = U*S
+  #
+  #     PH = position(PH, psi, pos(sweep_step))
+  #   end
   # end
 
   current_time += time_step
