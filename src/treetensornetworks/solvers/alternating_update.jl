@@ -70,8 +70,7 @@ function alternating_update(
       )
     end
 
-    current_time += time_step
-    update!(step_observer; psi, sweep=sw, outputlevel, current_time)
+    update!(step_observer; psi, sweep=sw, outputlevel)
 
     if outputlevel >= 1
       print("After sweep ", sw, ":")
