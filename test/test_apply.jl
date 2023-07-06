@@ -1,5 +1,13 @@
 using ITensorNetworks
-using ITensorNetworks: belief_propagation, get_environment, contract_inner, message_tensors
+using ITensorNetworks:
+  belief_propagation,
+  get_environment,
+  contract_inner,
+  message_tensors,
+  nested_graph_leaf_vertices,
+  vidal_gauge,
+  vidal_to_symmetric_gauge,
+  norm_network
 using Test
 using Compat
 using ITensors
@@ -9,7 +17,7 @@ using Random
 using LinearAlgebra
 using SplitApplyCombine
 
-@testset "full_update" begin
+@testset "apply" begin
   Random.seed!(5623)
   g_dims = (2, 3)
   n = prod(g_dims)
@@ -19,7 +27,7 @@ using SplitApplyCombine
   ψ = randomITensorNetwork(s; link_space=χ)
   v1, v2 = (2, 2), (1, 2)
 
-  ψψ = ψ ⊗ prime(dag(ψ); sites=[])
+  ψψ = norm_network(ψ)
 
   #Simple Belief Propagation Grouping
   vertex_groupsSBP = nested_graph_leaf_vertices(
@@ -29,6 +37,8 @@ using SplitApplyCombine
   mtsSBP = message_tensors(Z)
   mtsSBP = belief_propagation(ψψ, mtsSBP; contract_kwargs=(; alg="exact"), niters=50)
   envsSBP = get_environment(ψψ, mtsSBP, [(v1, 1), (v1, 2), (v2, 1), (v2, 2)])
+
+  ψ_vidal, bond_tensors = vidal_gauge(ψ, mtsSBP)
 
   #This grouping will correspond to calculating the environments exactly (each column of the grid is a partition)
   vertex_groupsGBP = nested_graph_leaf_vertices(
@@ -44,7 +54,7 @@ using SplitApplyCombine
   for i in 1:ngates
     o = ITensors.op("RandomUnitary", s[v1]..., s[v2]...)
 
-    ψOexact = apply(o, ψ; maxdim=4 * χ)
+    ψOexact = apply(o, ψ; cutoff=1e-16)
     ψOSBP = apply(
       o,
       ψ;
@@ -54,6 +64,8 @@ using SplitApplyCombine
       print_fidelity_loss=true,
       envisposdef=true,
     )
+    ψOVidal, bond_tensors_t = apply(o, ψ_vidal, bond_tensors; maxdim=χ, normalize=true)
+    ψOVidal_symm, _ = vidal_to_symmetric_gauge(ψOVidal, bond_tensors_t)
     ψOGBP = apply(
       o,
       ψ;
@@ -66,10 +78,15 @@ using SplitApplyCombine
     fSBP =
       contract_inner(ψOSBP, ψOexact) /
       sqrt(contract_inner(ψOexact, ψOexact) * contract_inner(ψOSBP, ψOSBP))
+    fVidal =
+      contract_inner(ψOVidal_symm, ψOexact) /
+      sqrt(contract_inner(ψOexact, ψOexact) * contract_inner(ψOVidal_symm, ψOVidal_symm))
     fGBP =
       contract_inner(ψOGBP, ψOexact) /
       sqrt(contract_inner(ψOexact, ψOexact) * contract_inner(ψOGBP, ψOGBP))
 
     @test real(fGBP * conj(fGBP)) >= real(fSBP * conj(fSBP))
+
+    @test isapprox(real(fSBP * conj(fSBP)), real(fVidal * conj(fVidal)); atol=1e-3)
   end
 end
