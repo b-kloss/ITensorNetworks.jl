@@ -47,13 +47,13 @@ function update_step(
   maxtruncerr = 0.0
   info = nothing
   for (n, (region, step_kwargs)) in enumerate(sweep_regions)
-    psi, PH, spec, info = local_update(
+    psi, PH, spec, info = local_expansion(
       solver,
       expander,
       PH,
       psi,
-      direction;
-      region;
+      region,
+      step_kwargs[:substep];
       outputlevel,
       cutoff,
       maxdim,
@@ -165,8 +165,8 @@ current_ortho(::Type{<:Vector{<:V}}, st) where {V} = first(st)
 current_ortho(::Type{NamedEdge{V}}, st) where {V} = src(st)
 current_ortho(st) = current_ortho(typeof(st), st)
 
-function local_update(
-  solver, expander, PH, psi, region, direction; normalize, noise, step_kwargs=NamedTuple(), kwargs...
+function local_expansion(
+  solver, expander, PH, psi, region, direction; outputlevel, cutoff, maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
 )
   psi = orthogonalize(psi, current_ortho(region))
   psi, phi = extract_local_tensor(psi, region)
@@ -179,57 +179,88 @@ function local_update(
     PH,
     psi,
     phi,
-    sweep_step,
+    region,
     direction;
     maxdim,
     cutoff,
     kwargs...,
   )
 
-  phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
+  phi, PH, info = local_update(
+    solver,
+    PH,
+    phi,
+    region;
+    outputlevel,
+    cutoff,
+    maxdim,
+    mindim,
+    normalize,
+    step_kwargs,
+    kwargs...,
+  )
 
-  if (typeof(pos(sweep_step)) != NamedEdge{Int})
-    n1 = pos(sweep_step)[1]
-    n2 = isforward(direction) ? n1+1 : n1-1
-
-    if n2 <= 100 && n2 > 0
-      m = 10
-      if dim(commonind(psi[n2],phi)) > m
-        PH = position(PH, psi, [n1,n2])
-        U,S,V = svd(phi*psi[n2], uniqueinds(phi,psi[n2]); maxdim=m, cutoff=0) #, lefttags = tags(commonind(psi[n2],phi)), righttags = tags(commonind(psi[n2],phi))) #, use_relative_cutoff=false, use_absolute_cutoff=true, kwargs...,)
-
-        psi[n2] = V
-        phi = U*S
-
-        PH = position(PH, psi, pos(sweep_step))
-      end
-    end
-  end
-
-  # if (typeof(pos(sweep_step)) == NamedEdge{Int})
-  #   (n1,n2) = (src(pos(sweep_step)),dst(pos(sweep_step)))
-  #   m = 5
-  #   if dim(commonind(psi[n1],phi)) > m
-  #     PH = position(PH, psi, [n1,n2])
-  #     U,S,V = svd(phi*psi[n2], uniqueinds(phi,psi[n2]); maxdim=m, cutoff=0) #, lefttags = tags(commonind(psi[n2],phi)), righttags = tags(commonind(psi[n2],phi))) #, use_relative_cutoff=false, use_absolute_cutoff=true, kwargs...,)
+  # if (typeof(region) != NamedEdge{Int})
+  #   n1 = region[1]
+  #   n2 = direction == 1 ? n1+1 : n1-1
   #
-  #     psi[n2] = V
-  #     phi = U*S
+  #   if n2 <= 100 && n2 > 0
+  #     m = 10
+  #     if dim(commonind(psi[n2],phi)) > m
+  #       PH = position(PH, psi, [n1,n2])
+  #       U,S,V = svd(phi*psi[n2], uniqueinds(phi,psi[n2]); 
+  #                   maxdim=m, cutoff=0, lefttags = tags(commonind(psi[n2],phi)), righttags = tags(commonind(psi[n2],phi)),
+  #                   # use_relative_cutoff=false, use_absolute_cutoff=true, kwargs...,
+  #                  )
   #
-  #     PH = position(PH, psi, pos(sweep_step))
+  #       @assert psi[n2] * phi ≈ U*S*V
+  #       psi[n2] = V
+  #       phi = U*S
+  #
+  #       PH = position(PH, psi, region)
+  #     end
   #   end
   # end
-  #
+
+  
+  if (typeof(region) == NamedEdge{Int})
+    (n1,n2) = (src(region),dst(region))
+    m = 5
+    if dim(commonind(psi[n1],phi)) > m
+      PH = position(PH, psi, [n1,n2])
+      U,S,V = svd(psi[n1]*phi*psi[n2], uniqueinds(psi[n1],phi); maxdim=m, cutoff=0, 
+                  lefttags = tags(commonind(psi[n1],phi)), righttags = tags(commonind(psi[n2],phi)),
+                  # use_relative_cutoff=false, use_absolute_cutoff=true, 
+                  kwargs...,
+                 )
+
+      psi[n1] = U
+      psi[n2] = V
+      phi = S
+
+      PH = position(PH, psi, region)
+    end
+  end
+  
   normalize && (phi /= norm(phi))
 
   drho = nothing
   ortho = "left"
-  #if noise > 0.0 && isforward(direction)
-  #  drho = noise * noiseterm(PH, phi, ortho) # TODO: actually implement this for trees...
-  #end
 
   psi, spec = insert_local_tensor(
     psi, phi, region; eigen_perturbation=drho, ortho, normalize, kwargs...
   )
+
   return psi, PH, spec, info
+end
+
+function local_update(
+  solver, PH, phi, region; normalize, noise, step_kwargs=NamedTuple(), kwargs...
+)
+
+  phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
+
+  normalize && (phi /= norm(phi))
+
+  return phi, PH, info
 end

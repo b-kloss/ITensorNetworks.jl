@@ -49,89 +49,148 @@ function expect(
   return res
 end
 
-# Define observer
-function step(; sweep, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
-    return sweep
-  end
-  return nothing
+# Define stepobserver
+function step(; sweep)
+  return sweep
 end
 
-function current_time(; current_time, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
-    return abs(current_time)
-  end
-  return nothing
+function current_time(; current_time)
+  return abs(current_time)
 end
 
-function return_x(; psi, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
-    expec = expect("Sx", psi)
-    return real(sum(expec)/length(expec))
-  end
-  return nothing
+function return_x(; psi)
+  expec = expect("Sx", psi)
+  return real(sum(expec)/length(expec))
 end
 
-function return_z(; psi, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
-    expec = expect("Sz", psi)
-    return real.(collect(expec))
-  end
-  return nothing
+function return_z(; psi)
+  expec = expect("Sz", psi)
+  return real.(collect(expec))
 end
 
-function return_z_mps(; psi, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
-    expec = ITensors.expect(MPS(psi), "Sz")
-    return real.(collect(expec))
-  end
-  return nothing
+function return_z_mps(; psi)
+  expec = ITensors.expect(MPS(psi), "Sz")
+  return real.(collect(expec))
 end
 
-function return_z_mean(; psi, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
-    expec = expect("Sz", psi)
-    return real(sum(expec)/length(expec))
-  end
-  return nothing
+function return_z_mean(; psi)
+  expec = expect("Sz", psi)
+  return real(sum(expec)/length(expec))
 end
 
-function return_z_half(; psi, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
-    half_len = floor(Int, length(vertices(psi))/2)
-    expec = expect("Sz", psi; vertices=half_len)
-    return real(sum(expec)/length(expec))
-  end
-  return nothing
-
+function return_z_half(; psi)
+  half_len = floor(Int, length(vertices(psi))/2)
+  expec = expect("Sz", psi; vertices=half_len)
+  return real(sum(expec)/length(expec))
 end
 
-function return_en(; psi, PH, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
-    H = PH.H
-    return real(inner(psi', H, psi) / inner(psi, psi))  
-  end
-  return nothing
+function return_en(; psi, PH)
+  H = PH.H
+  return real(inner(psi', H, psi) / inner(psi, psi))  
 end
 
-function return_state(; psi, bond, half_sweep)
-  if bond == 1 && half_sweep ==2
+function return_state(; psi, end_of_sweep)
+  if end_of_sweep
       return psi
   end
   return nothing
 end
 
-function return_entropy(; psi, bond, half_sweep)
-if bond == 1 && half_sweep ==2
-    pos = floor(Int, length(vertices(psi))/2)
-    psi_ = orthogonalize(psi, pos)
-    _,S,_ = svd(psi_[pos], (commonind(psi_[pos-1], psi_[pos]), filter(i->hastags(i, "Site"), inds(psi_[pos]))))
-    SvN = 0
-    for n=1:dim(S,1)
-        p = S[n,n]^2
-        SvN -= p*log(p)
-    end
-    return SvN
+function return_entropy(; psi)
+  pos = floor(Int, length(vertices(psi))/2)
+  psi_ = orthogonalize(psi, pos)
+  _,S,_ = svd(psi_[pos], (commonind(psi_[pos-1], psi_[pos]), filter(i->hastags(i, "Site"), inds(psi_[pos]))))
+  SvN = 0
+  for n=1:dim(S,1)
+      p = S[n,n]^2
+      SvN -= p*log(p)
+  end
+  return SvN
 end
-return nothing
-end
+
+# # Define observer
+# function step(; sweep, end_of_sweep)
+#   if bond == 1 && half_sweep ==2
+#     return sweep
+#   end
+#   return nothing
+# end
+#
+# function current_time(; current_time, end_of_sweep)
+#   if end_of_sweep
+#     return abs(current_time)
+#   end
+#   return nothing
+# end
+#
+# function return_x(; psi, end_of_sweep)
+#   if end_of_sweep
+#     expec = expect("Sx", psi)
+#     return real(sum(expec)/length(expec))
+#   end
+#   return nothing
+# end
+#
+# function return_z(; psi, end_of_sweep)
+#   if end_of_sweep
+#     expec = expect("Sz", psi)
+#     return real.(collect(expec))
+#   end
+#   return nothing
+# end
+#
+# function return_z_mps(; psi, end_of_sweep)
+#   if end_of_sweep
+#     expec = ITensors.expect(MPS(psi), "Sz")
+#     return real.(collect(expec))
+#   end
+#   return nothing
+# end
+#
+# function return_z_mean(; psi, end_of_sweep)
+#   if end_of_sweep
+#     expec = expect("Sz", psi)
+#     return real(sum(expec)/length(expec))
+#   end
+#   return nothing
+# end
+#
+# function return_z_half(; psi, end_of_sweep)
+#   if end_of_sweep
+#     half_len = floor(Int, length(vertices(psi))/2)
+#     expec = expect("Sz", psi; vertices=half_len)
+#     return real(sum(expec)/length(expec))
+#   end
+#   return nothing
+#
+# end
+#
+# function return_en(; psi, PH, end_of_sweep)
+#   if end_of_sweep
+#     H = PH.H
+#     return real(inner(psi', H, psi) / inner(psi, psi))  
+#   end
+#   return nothing
+# end
+#
+# function return_state(; psi, end_of_sweep)
+#   if end_of_sweep
+#       return psi
+#   end
+#   return nothing
+# end
+#
+# function return_entropy(; psi, end_of_sweep)
+#     if end_of_sweep
+#     pos = floor(Int, length(vertices(psi))/2)
+#     psi_ = orthogonalize(psi, pos)
+#     _,S,_ = svd(psi_[pos], (commonind(psi_[pos-1], psi_[pos]), filter(i->hastags(i, "Site"), inds(psi_[pos]))))
+#     SvN = 0
+#     for n=1:dim(S,1)
+#         p = S[n,n]^2
+#         SvN -= p*log(p)
+#     end
+#     return SvN
+# end
+# return nothing
+# end

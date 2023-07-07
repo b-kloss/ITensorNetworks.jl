@@ -3,7 +3,7 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
     PH,
     psi::ITensorNetworks.AbstractTTN{Vert},
     phi,
-    sweep_step,
+    region,
     direction;
     maxdim,
     cutoff=1e-10,
@@ -13,9 +13,9 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
   ) where {Vert}
 
     ### only on edges
-    # (typeof(ITensorNetworks.pos(sweep_step))!=NamedEdge{Int}) && return psi, phi, PH
+    (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
     ### only on verts
-    (typeof(ITensorNetworks.pos(sweep_step))==NamedEdge{Int}) && return psi, phi, PH
+    # (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
 
     # determine which expansion method and svd method to use
     if expander_backend == "none"
@@ -45,13 +45,13 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
     
     cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
 
-    if typeof(ITensorNetworks.pos(sweep_step)) == NamedEdge{Int} 
-      verts = [src(ITensorNetworks.pos(sweep_step)),dst(ITensorNetworks.pos(sweep_step))]
+    if typeof(region) == NamedEdge{Int} 
+      verts = [src(region),dst(region)]
     else
 
       ## kind of hacky - only works for mps. More general?
-      n1 = first(ITensorNetworks.pos(sweep_step))
-      if isforward(direction) 
+      n1 = first(region)
+      if direction == 1 
         n2 = n1 + 1
         n2 > 100 && return psi,phi,PH
       else
@@ -72,12 +72,13 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
       PH, psi, phi, verts, svd_func; expand_dir, maxdim, cutoff, cutoff_compress, atol, kwargs...,
     )
 
-    if typeof(ITensorNetworks.pos(sweep_step)) != NamedEdge{Int} 
-      phi = psi[first(ITensorNetworks.pos(sweep_step))] * phi
+    if typeof(region) != NamedEdge{Int} 
+      phi = psi[first(region)] * phi
     end
 
-    PH = set_nsite(PH, nsite(sweep_step))
-    PH = position(PH, psi, pos(sweep_step))
+    nsites = (region isa AbstractEdge) ? 0 : length(region)
+    PH = set_nsite(PH, nsites)
+    PH = position(PH, psi, region)
 
     return psi, phi, PH
   end
@@ -391,7 +392,7 @@ end
 
 function _full_expand_core(
   PH, psi, phi, pos, svd_func; expand_dir, maxdim, cutoff, cutoff_compress, atol, expander_cache=Any[],kwargs..., 
-) where {Vert}
+) 
 
   if isempty(expander_cache)
     @warn("building environment of H^2 from scratch!")
