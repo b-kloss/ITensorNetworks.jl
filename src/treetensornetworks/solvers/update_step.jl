@@ -20,6 +20,7 @@ function update_step(
   psi::AbstractTTN;
   cutoff::AbstractFloat=1E-16,
   maxdim::Int=typemax(Int),
+  maxdim_expand::Int=maxdim,
   mindim::Int=1,
   normalize::Bool=false,
   nsite::Int=2,
@@ -57,6 +58,7 @@ function update_step(
       outputlevel,
       cutoff,
       maxdim,
+      maxdim_expand,
       mindim,
       normalize,
       step_kwargs,
@@ -104,7 +106,6 @@ function update_step(
   return psi, PH, (; maxtruncerr)
 end
 
-#
 # Here extract_local_tensor and insert_local_tensor
 # are essentially inverse operations, adapted for different kinds of 
 # algorithms and networks.
@@ -113,16 +114,31 @@ end
 # tensors of the network and returns the result, while 
 # insert_local_tensors takes that tensor and factorizes it back
 # apart and puts it back into the network.
-#
 
 function extract_local_tensor(psi::AbstractTTN, pos::Vector)
   return psi, prod(psi[v] for v in pos)
+end
+
+function extract_local_tensor(psi::AbstractTTN, pos::Vector, m::Int)
+  extract_local_tensor(psi, pos)
 end
 
 function extract_local_tensor(psi::AbstractTTN, e::NamedEdge)
   left_inds = uniqueinds(psi, e)
   U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e))
   psi[src(e)] = U
+  return psi, S * V
+end
+
+function extract_local_tensor(psi::AbstractTTN, e::NamedEdge, m::Int)
+  # if dim(commonind(psi,e)) > m
+  #   @show dim(commonind(psi,e))
+  #   println("truncating")
+  # end
+  left_inds = uniqueinds(psi, e)
+  U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e), maxdim=m)
+  psi[src(e)] = U
+
   return psi, S * V
 end
 
@@ -166,10 +182,10 @@ current_ortho(::Type{NamedEdge{V}}, st) where {V} = src(st)
 current_ortho(st) = current_ortho(typeof(st), st)
 
 function local_expansion(
-  solver, expander, PH, psi, region, direction; outputlevel, cutoff, maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
+  solver, expander, PH, psi, region, direction; outputlevel, cutoff, maxdim, maxdim_expand=maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
 )
   psi = orthogonalize(psi, current_ortho(region))
-  psi, phi = extract_local_tensor(psi, region)
+  psi, phi = extract_local_tensor(psi, region, maxdim)
 
   nsites = (region isa AbstractEdge) ? 0 : length(region)
   PH = set_nsite(PH, nsites)
@@ -181,7 +197,7 @@ function local_expansion(
     phi,
     region,
     direction;
-    maxdim,
+    maxdim = maxdim_expand,
     cutoff,
     kwargs...,
   )
@@ -268,7 +284,15 @@ function local_update(
   solver, PH, phi, region; normalize, noise, step_kwargs=NamedTuple(), kwargs...
 )
 
-  phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
+  info = []
+  while true
+    try 
+      phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
+      break
+    catch e
+      @show e
+    end
+  end
 
   normalize && (phi /= norm(phi))
 

@@ -26,10 +26,11 @@ function xx_chain(N; J=1.0)
 end
 
 let
-  tmax = 20.
+  tmax = 40.
   dt = 0.1
   N = 100
-  D = 20
+  D = 40
+  Dexpand = 2000
 
   # Heisenberg with QNs
   s = siteinds("S=1/2", N; conserve_qns=true)
@@ -38,74 +39,75 @@ let
   model = xx_chain(N)
   H = mpo(model, s)
 
-  model_name = "xx_chain_futuretest"
+  model_name = "xx_chain"
+  params = "_N=$(N)_D=$(D)"
 
-  obs1 = Observer("time" => current_time, "zPolMPS" => return_z_mps, "zPol" => return_z, "energy" => return_en, "entropy" => return_entropy)
-  obs2 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en)
-  obs3 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
-  obs4 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
-  obs5 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
-  name_obs1 = "data/"*model_name*"_two_site_svd_N=$(N)_D=$(D)"
-  name_obs2 = "data/"*model_name*"_two_site_krylov_N=$(N)_D=$(D)"
-  name_obs3 = "data/"*model_name*"_full_svd_N=$(N)_D=$(D)"
-  name_obs4 = "data/"*model_name*"_full_krylov_N=$(N)_D=$(D)"
-  name_obs5 = "data/"*model_name*"_two_site_general_N=$(N)_D=$(D)"
+  obs1 = Observer("time" => step, "zPol" => return_z, "energy" => return_en, "entropy" => return_entropy)
+  obs2 = Observer("time" => step, "zPol" => return_z, "energy" => return_en, "entropy" => return_entropy)
+  obs3 = Observer("time" => step, "zPol" => return_z, "energy" => return_en, "entropy" => return_entropy) 
+  obs4 = Observer("time" => step, "zPol" => return_z, "energy" => return_en, "entropy" => return_entropy) 
+  obs5 = Observer("time" => step, "zPol" => return_z, "energy" => return_en, "entropy" => return_entropy) 
 
-  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, outputlevel=1, cutoff_compress=1e-12, cutoff=1e-12)
+  name_obs1 = "data/"*model_name*"_two_site_svd"    *params
+  name_obs2 = "data/"*model_name*"_two_site_krylov" *params
+  name_obs3 = "data/"*model_name*"_full_svd"        *params
+  name_obs4 = "data/"*model_name*"_full_krylov"     *params
+  name_obs5 = "data/"*model_name*"_two_site_general"*params
+
+  tdvp_kwargs = (time_step = -im*dt, reverse_step=false, normalize=true, maxdim=D, maxdim_expand=Dexpand, outputlevel=1, cutoff_compress=1e-12, cutoff=1e-12)
 
   Random.seed!(121)
   println("================================================================")
 
-  ϕ1 = tdvp(H, -im*tmax, ψ; tdvp_kwargs...,  
+  ϕ1 = @time tdvp(H, -im*tmax, ψ; tdvp_kwargs...,  
             expander_backend="two_site", 
             svd_backend="svd",
             nsite=1,
-            # cutoff=1e-6,
             (step_observer!)=obs1,
        )
   savedata(name_obs1, obs1)
 
   println("================================================================")
 
-  # ϕ2 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
-  #           expander_backend="two_site", 
-  #           svd_backend="krylov",
-  #           nsite=1,
-  #           # expander_cache=expander_cache,
+  ϕ2 = @time tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
+            expander_backend="two_site", 
+            svd_backend="krylov",
+            nsite=1,
             (step_observer!)=obs2,
-  #      )
-  # savedata(name_obs2, obs2)
+       )
+  savedata(name_obs2, obs2)
 
   println("================================================================")
 
-  # expander_cache=Any[]
-  # ϕ3 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
-  #           expander_backend="full", 
-  #           svd_backend="svd",
-  #           nsite=1,
-  #           expander_cache=expander_cache,
+  expander_cache=Any[]
+  ϕ3 = @time tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
+            expander_backend="full", 
+            svd_backend="svd",
+            nsite=1,
+            expander_cache=expander_cache,
             (step_observer!)=obs3,
-  #      )
-  # savedata(name_obs3, obs3)
+       )
+  savedata(name_obs3, obs3)
 
   println("================================================================")
 
-  # expander_cache=Any[]
-  # ϕ4 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
-  #           expander_backend="full", 
-  #           svd_backend="krylov", nsite=1, expander_cache=expander_cache, (observer!)=obs4,
-  #      )
-  # savedata(name_obs4, obs4)
+  expander_cache=Any[]
+  ϕ4 = @time tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
+            expander_backend="full", 
+            svd_backend="krylov", 
+            nsite=1, 
+            expander_cache=expander_cache, 
+            (step_observer!)=obs4,
+       )
+  savedata(name_obs4, obs4)
 
   println("================================================================")
 
-  # ϕ5 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
+  # ϕ5 = @time tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
   #           expander_backend="none", 
   #           svd_backend="krylov",
   #           nsite=2,
-  #           # cutoff=1e-8,
-  #           # expander_cache=expander_cache,
-  #           (observer!)=obs5,
+  #           (step_observer!)=obs5,
   #      )
   # savedata(name_obs5, obs5)
 

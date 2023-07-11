@@ -54,9 +54,10 @@ function step(; sweep)
   return sweep
 end
 
-function current_time(; current_time)
-  return abs(current_time)
-end
+## just use step 
+# function current_time(; current_time)
+#   return abs(current_time)
+# end
 
 function return_x(; psi)
   expec = expect("Sx", psi)

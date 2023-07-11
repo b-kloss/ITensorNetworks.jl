@@ -40,8 +40,7 @@ function alternating_update(
   maxdim, mindim, cutoff, noise, kwargs = process_sweeps(nsweeps; kwargs...)
 
   step_observer = get(kwargs, :step_observer!, nothing)
-  # time_step = abs(first(kwargs[:sweep_regions])[2][:time_step])
-  time_step = 1
+  maxdim_expand = get(kwargs, :maxdim_expand, maxdim)
 
   psi = copy(psi0)
 
@@ -65,6 +64,7 @@ function alternating_update(
         outputlevel,
         sweep=sw,
         maxdim=maxdim[sw],
+        maxdim_expand,
         mindim=mindim[sw],
         cutoff=cutoff[sw],
         noise=noise[sw],
@@ -72,7 +72,7 @@ function alternating_update(
       )
     end
 
-    update!(step_observer; psi, PH, sweep=sw, current_time = sw*time_step, outputlevel)
+    update!(step_observer; psi, PH, sweep=sw, outputlevel)
 
     if outputlevel >= 1
       print("After sweep ", sw, ":")

@@ -9,7 +9,7 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
     cutoff=1e-10,
     atol=1e-8,
     expand_dir=+1, # +1 for future direction, -1 for past
-    kws...,
+    kwargs...,
   ) where {Vert}
 
     ### only on edges
@@ -44,6 +44,7 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
     # between different QNs locally is static once bond dimension saturates maxdim.)
     
     cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
+    expander_cache = get(kwargs, :expander_cache, Any[])
 
     if typeof(region) == NamedEdge{Int} 
       verts = [src(region),dst(region)]
@@ -52,30 +53,39 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
       ## kind of hacky - only works for mps. More general?
       n1 = first(region)
       if direction == 1 
-        n2 = n1 - 1
-        n2 < 1 && return psi,phi,PH
+        n2 = expand_dir == 1 ? n1 - 1 : n1+1
       else
-        n2 = n1 + 1
-        n2 > 100 && return psi,phi,PH
+        n2 = expand_dir == 1 ? n1 + 1 : n1-1
       end
+      (n2 < 1 || n2 > length(vertices(psi))) && return psi,phi,PH
       verts = [n1,n2]
 
-      ## bring it into the same functional form used for the Named-Edge case
+      ## bring it into the same functional form used for the Named-Edge case by doing an svd
       left_inds = uniqueinds(psi[n1], psi[n2])
       U, S, V = svd(psi[n1], left_inds; lefttags=tags(commonind(psi[n1],psi[n2])), righttags=tags(commonind(psi[n1],psi[n2])))
       psi[n1] = U
       phi = S*V
     end
 
-    # get subspace expansion
+    # subspace expansion
     psi, phi, PH = _expand_core(
-      PH, psi, phi, verts, svd_func; expand_dir, maxdim, cutoff, cutoff_compress, atol, kwargs...,
+      PH, psi, phi, verts, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol,
     )
 
+    # needed to make sure we expand into the future by multiplying the zero padded bond tensor to the tensor lying in the past
+    if expand_dir == +1
+      U,S,V = svd(psi[n1]*phi, uniqueinds(psi[n1], phi); lefttags = tags(commonind(psi[n1],phi)), righttags = tags(commonind(psi[n2],phi))) 
+
+      psi[n1] = U
+      phi = S*V
+    end
+
+    # if expansion happens on vertex, return to original form
     if typeof(region) != NamedEdge{Int} 
       phi = psi[first(region)] * phi
     end
 
+    # update environment
     nsites = (region isa AbstractEdge) ? 0 : length(region)
     PH = set_nsite(PH, nsites)
     PH = position(PH, psi, region)
@@ -86,7 +96,7 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
 end
 
 function _svd_solve_normal(
-  envMap, left_ind; maxdim, cutoff, envflux, kwargs...
+  envMap, left_ind; maxdim, cutoff, envflux, #kwargs...
 )
   U,S,V = svd(
     ITensors.ITensorNetworkMaps.contract(envMap),
@@ -95,7 +105,6 @@ function _svd_solve_normal(
     cutoff,
     use_relative_cutoff=false,
     use_absolute_cutoff=true,
-    kwargs...,
   )
 
   vals = array(S)
@@ -297,10 +306,8 @@ function _krylov_svd_solve(
 end
 
 function _two_site_expand_core(
-  PH, psi, phi, verts, svd_func; expand_dir, maxdim, cutoff, cutoff_compress, atol, kwargs...,
+  PH, psi, phi, verts, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol,
 )
-  maxdim = 20000
-
   psis = map(n -> psi[n], verts)
   old_linkdim = dim(commonind(first(psis), phi))
 
@@ -379,19 +386,12 @@ function _two_site_expand_core(
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
 
   @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) <= 1e-10
-
-  # if expand_dir == +1
-  #   U,S,V = svd(psi[n1]*new_phi, uniqueinds(psi[n1], new_phi); lefttags = tags(commonind(psi[n1],new_phi)), righttags = tags(commonind(psi[n2],new_phi))) 
-  #
-  #   psi[n1] = U
-  #   new_phi = S*V
-  # end
  
   return psi, new_phi, PH
 end
 
 function _full_expand_core(
-  PH, psi, phi, pos, svd_func; expand_dir, maxdim, cutoff, cutoff_compress, atol, expander_cache=Any[],kwargs..., 
+  PH, psi, phi, pos, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol,
 ) 
 
   if isempty(expander_cache)
@@ -405,16 +405,17 @@ function _full_expand_core(
     H2_ed = edge_data(data_graph(PH.H))
 
     H2 = TTN(ITensorNetwork(DataGraph(g, H2_vd, H2_ed)), PH.H.ortho_center)
+    PH2 = ProjTTN(H2)
+    PH2 = set_nsite(PH2, 2)
 
-    push!(expander_cache, ProjTTN(H2))
+    push!(expander_cache, PH2)
   end
 
   PH2 = expander_cache[1]
   n1 = expand_dir>0 ? pos[2] : pos[1]
   n2 = expand_dir>0 ? pos[1] : pos[2]
 
-  PH2 = set_nsite(PH2, 1)
-  PH2 = position(PH2, psi, [n1])
+  PH2 = position(PH2, psi, [n1,n2])
 
   psi1 = psi[n1]
   psi2 = psi[n2]
@@ -430,10 +431,11 @@ function _full_expand_core(
   # if nullspace is empty (happen's for product states with QNs)
   norm(nullVec) == 0.0 && return psi, phi, PH
 
-  PH = position(PH, psi, [n1])
+  PH = position(PH, psi, [n1,n2])
 
   ## compute both environments
   g = underlying_graph(PH)
+
   PHn1 = map(e -> PH.environments[NamedEdge(e)], [v => n1 for v in neighbors(g, n1) if v != n2])
   PHn1 = noprime(reduce(*, PHn1, init=phi*psi1*PH.H[n1]))*nullVec
   PHn2 = map(e -> PH2.environments[NamedEdge(e)], [v => n2 for v in neighbors(g, n2) if v != n1])
@@ -444,7 +446,7 @@ function _full_expand_core(
 
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([PHn1,PHn2,prime(dag(PHn1))] , outinds, ininds)
   envMapc=ITensors.ITensorNetworkMaps.contract(envMap)
-  norm(envMapc) ≤ 1e-13 && return psi,phi,PH
+  norm(envMapc) ≤ 1e-10 && return psi,phi,PH
 
   # svd-decomposition
   U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff,envflux=flux(envMapc))
@@ -456,7 +458,7 @@ function _full_expand_core(
 
   # expand current site tensors
   new_psi, newl = ITensors.directsum(
-    psi1 => uniqueinds(psi1, newL), dag(newL) => uniqueinds(newL, psi1); tags=(tags(commonind(psi1,phi)),)
+    psi1 => uniqueinds(psi1, newL), dag(newL) => uniqueinds(dag(newL), psi1); tags=(tags(commonind(psi1,phi)),)
   )
   Cl = combiner(newl; tags=tags(newl[1]), dir=dir(newl[1]))
 
@@ -464,28 +466,24 @@ function _full_expand_core(
 
   # zero-pad bond-tensor (the orthogonality center)
   if hasqns(phi)
-    new_phi=ITensor(eltype(phi),flux(phi),commonind(phi,psi2),dag(newl)...)
+    new_phi=ITensor(eltype(phi),flux(phi),dag(newl)...,commonind(phi,psi2))
     fill!(new_phi,0.0)
   else
-    new_phi = ITensor(eltype(phi),dag(newl)...,commonind(phi,psi2))
+    new_phi = ITensor(eltype(phi),commonind(phi,psi2),dag(newl)...)
   end
 
   map(eachindex(phi)) do I
     v = phi[I]
     !iszero(v) && (return new_phi[I]=v)
   end
+
   old_twosite_tensor=psi[n2]*phi*psi[n1]
   psi[n1] = noprime(new_psi*Cl)
-  @assert norm(psi[n2]*(dag(Cl)*new_phi)*psi[n1] - old_twosite_tensor)<=1e-13
+  new_phi = dag(Cl)*new_phi
 
-  if expand_dir == +1
-    U,S,V = svd(psi[n1]*new_phi, uniqueinds(psi[n1], new_phi); lefttags = tags(commonind(psi[n1],new_phi)), righttags = tags(commonind(psi[n2],new_phi))) 
-
-    psi[n1] = U
-    new_phi = S*V
-  end
+  @assert norm(psi[n2]*new_phi*psi[n1] - old_twosite_tensor)<=1e-13
   
-  return psi, dag(Cl)*new_phi, PH
+  return psi, new_phi, PH
 end
 
 function _kkit_init_check(u₀,theadj,thenormal)
@@ -495,7 +493,7 @@ function _kkit_init_check(u₀,theadj,thenormal)
   α = norm(v₀) / β₀
   Av₀ = thenormal(v₀) # apply operator
   α² = dot(u₀, Av₀) / β₀^2
-  if norm(α²) < eps(Float64)
+  if norm(α²) < 1e-8 # eps(Float64)
     return false
   else
     α² ≈ α * α || throw(ArgumentError("operator and its adjoint are not compatible"))
