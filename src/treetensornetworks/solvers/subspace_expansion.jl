@@ -1,4 +1,4 @@
-function general_expander(; expander_backend="two_site", svd_backend="svd", kwargs...)
+function general_expander(; expander_backend="none", svd_backend="svd", kwargs...)
   function expander(
     PH,
     psi::ITensorNetworks.AbstractTTN{Vert},
@@ -8,14 +8,14 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
     maxdim,
     cutoff=1e-10,
     atol=1e-8,
-    expand_dir=-1, # +1 for future direction, -1 for past
+    expand_dir=+1, # +1 for future direction, -1 for past
     kws...,
   ) where {Vert}
 
     ### only on edges
-    (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
+    # (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
     ### only on verts
-    # (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
+    (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
 
     # determine which expansion method and svd method to use
     if expander_backend == "none"
@@ -52,11 +52,11 @@ function general_expander(; expander_backend="two_site", svd_backend="svd", kwar
       ## kind of hacky - only works for mps. More general?
       n1 = first(region)
       if direction == 1 
-        n2 = n1 + 1
-        n2 > 100 && return psi,phi,PH
-      else
         n2 = n1 - 1
         n2 < 1 && return psi,phi,PH
+      else
+        n2 = n1 + 1
+        n2 > 100 && return psi,phi,PH
       end
       verts = [n1,n2]
 
@@ -299,7 +299,7 @@ end
 function _two_site_expand_core(
   PH, psi, phi, verts, svd_func; expand_dir, maxdim, cutoff, cutoff_compress, atol, kwargs...,
 )
-  maxdim = 20
+  maxdim = 20000
 
   psis = map(n -> psi[n], verts)
   old_linkdim = dim(commonind(first(psis), phi))

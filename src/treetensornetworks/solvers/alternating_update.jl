@@ -40,7 +40,8 @@ function alternating_update(
   maxdim, mindim, cutoff, noise, kwargs = process_sweeps(nsweeps; kwargs...)
 
   step_observer = get(kwargs, :step_observer!, nothing)
-  time_step = abs(first(kwargs[:sweep_regions])[2][:time_step])
+  # time_step = abs(first(kwargs[:sweep_regions])[2][:time_step])
+  time_step = 1
 
   psi = copy(psi0)
 

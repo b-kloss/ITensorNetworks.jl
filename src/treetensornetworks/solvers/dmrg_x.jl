@@ -8,6 +8,6 @@ function dmrg_x_solver(PH, init; kwargs...)
 end
 
 function dmrg_x(PH, init::AbstractTTN; kwargs...)
-  psi = alternating_update(dmrg_x_solver, PH, init; kwargs...)
+  psi = alternating_update(dmrg_x_solver, general_expander(; kwargs...), PH, init; kwargs...)
   return psi
 end
