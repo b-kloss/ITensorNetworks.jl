@@ -8,6 +8,7 @@ function eigsolve_solver(; solver_which_eigenvalue=:SR, kwargs...)
       krylovdim=get(kwargs, :solver_krylovdim, 3),
       maxiter=get(kwargs, :solver_maxiter, 1),
       verbosity=get(kwargs, :solver_verbosity, 0),
+      # cutoff=get(kws, :cutoff, 1E-12),
     )
     vals, vecs, info = eigsolve(H, init, howmany, which; solver_kwargs...)
     psi = vecs[1]

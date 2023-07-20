@@ -64,7 +64,7 @@ function alternating_update(
         outputlevel,
         sweep=sw,
         maxdim=maxdim[sw],
-        maxdim_expand,
+        maxdim_expand=maxdim[sw],
         mindim=mindim[sw],
         cutoff=cutoff[sw],
         noise=noise[sw],
@@ -72,13 +72,12 @@ function alternating_update(
       )
     end
 
-    update!(step_observer; psi, PH, sweep=sw, outputlevel)
+    update!(step_observer; psi, PH, psi0=get(kwargs,:psi_gs, nothing), sweep=sw, outputlevel)
 
     if outputlevel >= 1
       print("After sweep ", sw, ":")
       print(" maxlinkdim=", maxlinkdim(psi))
       @printf(" maxerr=%.2E", info.maxtruncerr)
-      #print(" current_time=", round(current_time; digits=3))
       print(" time=", round(sw_time; digits=3))
       println()
       flush(stdout)

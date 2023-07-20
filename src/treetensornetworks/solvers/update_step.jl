@@ -53,8 +53,7 @@ function update_step(
       expander,
       PH,
       psi,
-      region,
-      get(step_kwargs, :substep, 1);
+      region;
       outputlevel,
       cutoff,
       maxdim,
@@ -131,10 +130,6 @@ function extract_local_tensor(psi::AbstractTTN, e::NamedEdge)
 end
 
 function extract_local_tensor(psi::AbstractTTN, e::NamedEdge, m::Int)
-  # if dim(commonind(psi,e)) > m
-  #   @show dim(commonind(psi,e))
-  #   println("truncating")
-  # end
   left_inds = uniqueinds(psi, e)
   U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e), maxdim=m)
   psi[src(e)] = U
@@ -146,7 +141,8 @@ end
 function insert_local_tensor(
   psi::AbstractTTN,
   phi::ITensor,
-  pos::Vector;
+  pos::Vector,
+  maxdim::Int;
   which_decomp=nothing,
   normalize=false,
   eigen_perturbation=nothing,
@@ -157,7 +153,7 @@ function insert_local_tensor(
     e = edgetype(psi)(v, vnext)
     indsTe = inds(psi[v])
     L, phi, spec = factorize(
-      phi, indsTe; which_decomp, tags=tags(psi, e), eigen_perturbation, kwargs...
+      phi, indsTe; which_decomp, tags=tags(psi, e), eigen_perturbation, maxdim=maxdim, kwargs...
     )
     psi[v] = L
     eigen_perturbation = nothing # TODO: fix this
@@ -170,7 +166,7 @@ function insert_local_tensor(
   return psi, spec
 end
 
-function insert_local_tensor(psi::AbstractTTN, phi::ITensor, e::NamedEdge; kwargs...)
+function insert_local_tensor(psi::AbstractTTN, phi::ITensor, e::NamedEdge, maxdim::Int; kwargs...)
   psi[dst(e)] *= phi
   psi = set_ortho_center(psi, [dst(e)])
   return psi, nothing
@@ -182,8 +178,9 @@ current_ortho(::Type{NamedEdge{V}}, st) where {V} = src(st)
 current_ortho(st) = current_ortho(typeof(st), st)
 
 function local_expansion(
-  solver, expander, PH, psi, region, direction; outputlevel, cutoff, maxdim, maxdim_expand=maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
+  solver, expander, PH, psi, region; outputlevel, cutoff, maxdim, maxdim_expand=maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
 )
+  direction = get(step_kwargs, :substep, 1)
   psi = orthogonalize(psi, current_ortho(region))
   psi, phi = extract_local_tensor(psi, region, maxdim)
 
@@ -220,7 +217,7 @@ function local_expansion(
   #   n1 = region[1]
   #   n2 = direction == 1 ? n1+1 : n1-1
   #
-  #   if n2 <= 24 && n2 > 0
+  #   if n2 <= 16 && n2 > 0
   #     m = 40
   #     if dim(commonind(psi[n2],phi)) > m
   #       PH = position(PH, psi, [n1,n2])
@@ -274,7 +271,7 @@ function local_expansion(
   ortho = "left"
 
   psi, spec = insert_local_tensor(
-    psi, phi, region; eigen_perturbation=drho, ortho, normalize, kwargs...
+    psi, phi, region, maxdim; eigen_perturbation=drho, ortho, normalize, kwargs...
   )
 
   return psi, PH, spec, info
@@ -283,8 +280,8 @@ end
 function local_update(
   solver, PH, phi, region; normalize, noise, step_kwargs=NamedTuple(), kwargs...
 )
-
   info = []
+  ### solver behaves weirdly sometimes, stating that PH is not hermitian; this fixes it ###
   while true
     try 
       phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
