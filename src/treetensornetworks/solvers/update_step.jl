@@ -167,7 +167,9 @@ function insert_local_tensor(
 end
 
 function insert_local_tensor(psi::AbstractTTN, phi::ITensor, e::NamedEdge, maxdim::Int; kwargs...)
-  psi[dst(e)] *= phi
+  U, S, V = svd(phi, commonind(phi, psi[src(e)]); maxdim, lefttags=tags(commonind(phi,psi[src(e)])), righttags=tags(commonind(phi,psi[src(e)])))
+  psi[dst(e)] *= S*V
+  psi[src(e)] *= U
   psi = set_ortho_center(psi, [dst(e)])
   return psi, nothing
 end
@@ -182,7 +184,7 @@ function local_expansion(
 )
   direction = get(step_kwargs, :substep, 1)
   psi = orthogonalize(psi, current_ortho(region))
-  psi, phi = extract_local_tensor(psi, region, maxdim)
+  psi, phi = extract_local_tensor(psi, region) #, maxdim)
 
   nsites = (region isa AbstractEdge) ? 0 : length(region)
   PH = set_nsite(PH, nsites)
@@ -213,66 +215,16 @@ function local_expansion(
     kwargs...,
   )
 
-  # if (typeof(region) != NamedEdge{Int})
-  #   n1 = region[1]
-  #   n2 = direction == 1 ? n1+1 : n1-1
-  #
-  #   if n2 <= 16 && n2 > 0
-  #     m = 40
-  #     if dim(commonind(psi[n2],phi)) > m
-  #       PH = position(PH, psi, [n1,n2])
-  #       U,S,V = svd(phi*psi[n2], uniqueinds(phi,psi[n2]); maxdim=m, cutoff=1e-12, 
-  #                   lefttags = tags(commonind(psi[n2],phi)), righttags = tags(commonind(psi[n2],phi)),
-  #                   # use_relative_cutoff=false, use_absolute_cutoff=true, kwargs...,
-  #                  )
-  #
-  #       # @assert psi[n2] * phi ≈ U*S*V
-  #       psi[n2] = V
-  #       phi = U*S
-  #
-  #       PH = position(PH, psi, region)
-  #     end
-  #   end
-  # end
-
-  
-  # if (typeof(region) == NamedEdge{Int})
-  #   (n1,n2) = (src(region),dst(region))
-  #   m = 20
-  #   if dim(commonind(psi[n1],phi)) > m
-  #     # @show dim(commonind(psi[n1],phi))
-  #     # @show dim(commonind(psi[n2],phi))
-  #     # @show n1,n2
-  #     PH = position(PH, psi, [n1,n2])
-  #     U,S,V = svd(psi[n1]*phi*psi[n2], uniqueinds(psi[n1],phi); maxdim=m, cutoff=0, 
-  #                 lefttags = tags(commonind(psi[n1],phi)), righttags = tags(commonind(psi[n2],phi)),
-  #                 # use_relative_cutoff=false, use_absolute_cutoff=true, 
-  #                 kwargs...,
-  #                )
-  #
-  #     # @show dim(commonind(U,S))
-  #     # @show dim(commonind(V,S))
-  #     psi[n1] = U
-  #     psi[n2] = V
-  #     phi = S
-  #
-  #     PH = position(PH, psi, region)
-  #   end
-  # end
-  # if (typeof(region) == NamedEdge{Int})
-  #   (n1,n2) = (src(region),dst(region))
-  #   # @show dim(commonind(psi[n1],phi))
-  #   # @show dim(commonind(psi[n2],phi))
-  # end
-  
   normalize && (phi /= norm(phi))
 
   drho = nothing
   ortho = "left"
 
+  (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,[src(region),dst(region)]))
   psi, spec = insert_local_tensor(
     psi, phi, region, maxdim; eigen_perturbation=drho, ortho, normalize, kwargs...
   )
+  (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,region))
 
   return psi, PH, spec, info
 end

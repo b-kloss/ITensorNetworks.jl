@@ -8,14 +8,14 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
     maxdim,
     cutoff=1e-10,
     atol=1e-8,
-    expand_dir=+1, # +1 for future direction, -1 for past
+    expand_dir=-1, # +1 for future direction, -1 for past
     kwargs...,
   ) where {Vert}
 
     ### only on edges
-    # (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
+    (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
     ### only on verts
-    (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
+    # (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
 
     # determine which expansion method and svd method to use
     if expander_backend == "none"
@@ -49,7 +49,7 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
 
     if typeof(region) == NamedEdge{Int} 
       n1,n2 = (src(region),dst(region))
-      verts = [n1,n2]
+      verts = expand_dir == 1 ? [n1,n2] : [n1,n2]
     else
 
       ## kind of hacky - only works for mps. More general?
@@ -342,9 +342,9 @@ function _two_site_expand_core(
   ## build environments
   g = underlying_graph(PH)
   envs = map(zip(verts,psis)) do (n,psi)
-    return noprime(mapreduce(*, [v => n for v in neighbors(g, n) if !(v ∈ verts)]; init = psi*PH.H[n]) do e
+    return noprime(mapreduce(*, [v => n for v in neighbors(g, n) if !(v ∈ verts)]; init = psi) do e
       return PH.environments[NamedEdge(e)]
-    end )
+    end *PH.H[n])
   end
 
   ininds = uniqueinds(last(nullVecs),last(psis))
@@ -399,7 +399,7 @@ function _two_site_expand_core(
 
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
 
-  # @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) < eps(Float64)
+  @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) < eps(Float64)
  
   return psi, new_phi, PH
 end
@@ -432,6 +432,7 @@ function _full_expand_core(
   n2 = verts[1]
 
   PH2 = position(PH2, psi, [n1,n2])
+  PH = position(PH, psi, [n1,n2])
 
   psi1 = psi[n1]
   psi2 = psi[n2]
@@ -447,7 +448,6 @@ function _full_expand_core(
   # if nullspace is empty (happen's for product states with QNs)
   norm(nullVec) == 0.0 && return psi, phi, PH
 
-  PH = position(PH, psi, [n1,n2])
 
   ## compute both environments
   g = underlying_graph(PH)
