@@ -55,6 +55,21 @@ function alternating_update(
       PH = disk(PH)
     end
 
+    psi, PH = step_expand(
+      two_site_func,
+      # expander,
+      PH,
+      psi;
+      outputlevel,
+      sweep=sw,
+      maxdim=maxdim[sw],
+      maxdim_expand=maxdim[sw],
+      mindim=mindim[sw],
+      cutoff=cutoff[sw],
+      noise=noise[sw],
+      kwargs...,
+    )
+
     sw_time = @elapsed begin
       psi, PH, info = update_step(
         solver,

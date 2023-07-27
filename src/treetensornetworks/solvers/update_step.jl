@@ -13,6 +13,68 @@ function update_sweep(nsite, graph::AbstractGraph; kwargs...)
   )
 end
 
+function step_expand(
+  expander,
+  PH,
+  psi::AbstractTTN;
+  cutoff::AbstractFloat=1E-16,
+  maxdim::Int=typemax(Int),
+  maxdim_expand::Int,
+  mindim::Int=1,
+  normalize::Bool=false,
+  nsite::Int=2,
+  outputlevel::Int=0,
+  sw::Int=1,
+  sweep_regions=update_sweep(nsite, psi),
+  kwargs...,
+)
+  # (Needed to handle user-provided sweep_regions)
+  sweep_regions = append_missing_namedtuple.(to_tuple.(sweep_regions))
+
+  if nv(psi) == 1
+    error(
+      "`alternating_update` currently does not support system sizes of 1. You can diagonalize the MPO tensor directly with tools like `LinearAlgebra.eigen`, `KrylovKit.exponentiate`, etc.",
+    )
+  end
+
+  for (n, (region, step_kwargs)) in enumerate(sweep_regions)
+    direction = get(step_kwargs, :substep, 1)
+    direction > 1 && continue
+    psi = orthogonalize(psi, current_ortho(region))
+    psi, phi = extract_local_tensor(psi, region, maxdim)
+
+    nsites = (region isa AbstractEdge) ? 0 : length(region)
+
+    PH = set_nsite(PH, nsites)
+    PH = position(PH, psi, region)
+
+    psi,phi,PH = expander(
+      PH,
+      psi,
+      phi,
+      region,
+      direction;
+      maxdim = maxdim_expand,
+      cutoff,
+      kwargs...,
+    )
+
+    normalize && (phi /= norm(phi))
+
+    drho = nothing
+    ortho = "left"
+
+    (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,[src(region),dst(region)]))
+    psi, spec = insert_local_tensor(
+      psi, phi, region, maxdim; eigen_perturbation=drho, ortho, normalize, kwargs...
+    )
+    (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,region))
+  end
+
+  normalize && normalize!(psi)
+  return psi, PH
+end
+
 function update_step(
   solver,
   expander,
@@ -20,7 +82,7 @@ function update_step(
   psi::AbstractTTN;
   cutoff::AbstractFloat=1E-16,
   maxdim::Int=typemax(Int),
-  maxdim_expand::Int=maxdim,
+  maxdim_expand::Int,
   mindim::Int=1,
   normalize::Bool=false,
   nsite::Int=2,
@@ -192,48 +254,17 @@ function local_expansion(
   PH = set_nsite(PH, nsites)
   PH = position(PH, psi, region)
 
-  psi,phi,PH = expander(
-    PH,
-    psi,
-    phi,
-    region,
-    direction;
-    maxdim = maxdim_expand,
-    cutoff,
-    kwargs...,
-  )
+  # psi,phi,PH = expander(
+  #   PH,
+  #   psi,
+  #   phi,
+  #   region,
+  #   direction;
+  #   maxdim = maxdim_expand,
+  #   cutoff,
+  #   kwargs...,
+  # )
 
-  phi, PH, info = local_update(
-    solver,
-    PH,
-    phi,
-    region;
-    outputlevel,
-    cutoff,
-    maxdim,
-    mindim,
-    normalize,
-    step_kwargs,
-    kwargs...,
-  )
-
-  normalize && (phi /= norm(phi))
-
-  drho = nothing
-  ortho = "left"
-
-  (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,[src(region),dst(region)]))
-  psi, spec = insert_local_tensor(
-    psi, phi, region, maxdim; eigen_perturbation=drho, ortho, normalize, kwargs...
-  )
-  (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,region))
-
-  return psi, PH, spec, info
-end
-
-function local_update(
-  solver, PH, phi, region; normalize, noise, step_kwargs=NamedTuple(), kwargs...
-)
   info = []
   ### solver behaves weirdly sometimes, stating that PH is not hermitian; this fixes it ###
   while true
@@ -247,5 +278,14 @@ function local_update(
 
   normalize && (phi /= norm(phi))
 
-  return phi, PH, info
+  drho = nothing
+  ortho = "left"
+
+  (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,[src(region),dst(region)]))
+  psi, spec = insert_local_tensor(
+    psi, phi, region, maxdim; eigen_perturbation=drho, ortho, normalize, kwargs...
+  )
+  (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,region))
+
+  return psi, PH, spec, info
 end

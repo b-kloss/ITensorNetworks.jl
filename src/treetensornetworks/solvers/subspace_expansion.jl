@@ -12,6 +12,10 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
     kwargs...,
   ) where {Vert}
 
+    cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
+    expander_cache = get(kwargs, :expander_cache, Any[])
+    nsites = (region isa AbstractEdge) ? 0 : length(region)
+
     ### only on edges
     #(typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
     ### only on verts
@@ -98,7 +102,6 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
     =#
 
     # update environment
-    nsites = (region isa AbstractEdge) ? 0 : length(region)
     PH = set_nsite(PH, nsites)
     PH = position(PH, psi, region)
 
@@ -408,10 +411,8 @@ function _two_site_expand_core(
   @assert sum(findmax.(dim.(new_inds))[1] .> maxdim) == 0
 
   # zero-pad bond-tensor (the orthogonality center)
-
   phi_indices = replace(inds(phi), (commonind(phi,psis[n]) => dag(new_inds[n]) for n in 1:2)...)
   #phi_indices = replace(phi_indices, commonind(phi,psis[2]) => dag(new_inds[2]))
-  
  
   if hasqns(phi)
     new_phi=ITensor(eltype(phi),flux(phi), phi_indices...)
@@ -579,7 +580,6 @@ function _full_expand_core(
 
     H2 = TTN(ITensorNetwork(DataGraph(g, H2_vd, H2_ed)), PH.H.ortho_center)
     PH2 = ProjTTN(H2)
-    PH2 = set_nsite(PH2, 2)
 
     push!(expander_cache, PH2)
   end
@@ -588,7 +588,12 @@ function _full_expand_core(
   n1 = verts[2]
   n2 = verts[1]
 
+  # @show inds.(PH2.environments)
+
+  PH2 = set_nsite(PH2, 2)
   PH2 = position(PH2, psi, [n1,n2])
+
+  # @show inds.(PH2.environments)
   PH = position(PH, psi, [n1,n2])
 
   psi1 = psi[n1]
@@ -660,7 +665,8 @@ function _full_expand_core(
   new_phi = dag(Cl)*new_phi
 
   @assert norm(psi[n2]*new_phi*psi[n1] - old_twosite_tensor) < eps(Float64)
-  
+
+  # @show "expanded"
   return psi, new_phi, PH
 end
 
@@ -677,4 +683,67 @@ function _kkit_init_check(u₀,theadj,thenormal)
     α² ≈ α * α || throw(ArgumentError("operator and its adjoint are not compatible"))
   end
   return true
+end
+
+
+function two_site_func(
+  PH,
+  psi::ITensorNetworks.AbstractTTN{Vert},
+  phi,
+  region,
+  direction;
+  maxdim,
+  cutoff=1e-10,
+  atol=1e-8,
+  expand_dir=-1, # +1 for future direction, -1 for past
+  kwargs...,
+) where {Vert}
+
+  cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
+  expander_cache = get(kwargs, :expander_cache, Any[])
+  nsites = (region isa AbstractEdge) ? 0 : length(region)
+
+  ### only on edges
+  # (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
+  ### only on verts
+  (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
+
+  to = get(kwargs, :to, Any[])
+
+  if typeof(region) == NamedEdge{Int} 
+    n1,n2 = (src(region),dst(region))
+    verts = expand_dir == 1 ? [n1,n2] : [n2,n1]
+  else
+    ## kind of hacky - only works for mps. More general?
+    n1 = first(region)
+    if direction == 1 
+      n2 = expand_dir == 1 ? n1 - 1 : n1+1
+    else
+      n2 = expand_dir == 1 ? n1 + 1 : n1-1
+    end
+    (n2 < 1 || n2 > length(vertices(psi))) && return psi,phi,PH
+    verts = [n1,n2]
+
+    ## bring it into the same functional form used for the Named-Edge case by doing an svd
+    left_inds = uniqueinds(psi[n1], psi[n2])
+    U, S, V = svd(psi[n1], left_inds; lefttags=tags(commonind(psi[n1],psi[n2])), righttags=tags(commonind(psi[n1],psi[n2])))
+    psi[n1] = U
+    phi = S*V
+  end
+
+  # subspace expansion
+  psi, phi, PH = _two_site_expand_core(
+    PH, psi, phi, verts, _svd_solve_normal; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
+  )
+
+  # if expansion happens on vertex, return to original form
+  if typeof(region) != NamedEdge{Int} 
+    phi = psi[first(region)] * phi
+  end
+
+  # # update environment
+  # PH = set_nsite(PH, nsites)
+  # PH = position(PH, psi, region)
+
+  return psi, phi, PH
 end
