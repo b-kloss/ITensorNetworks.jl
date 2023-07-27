@@ -13,9 +13,9 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
   ) where {Vert}
 
     ### only on edges
-    (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
+    #(typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
     ### only on verts
-    # (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
+    (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
 
     # determine which expansion method and svd method to use
     if expander_backend == "none"
@@ -49,7 +49,7 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
 
     if typeof(region) == NamedEdge{Int} 
       n1,n2 = (src(region),dst(region))
-      verts = expand_dir == 1 ? [n1,n2] : [n1,n2]
+      verts = expand_dir == 1 ? [n1,n2] : [n2,n1]
     else
 
       ## kind of hacky - only works for mps. More general?
@@ -402,6 +402,11 @@ function _two_site_expand_core(
   @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) < eps(Float64)
  
   return psi, new_phi, PH
+end
+
+function _full_expand_core_vertex(
+  PH, psi, phi, verts, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
+)
 end
 
 function _full_expand_core(

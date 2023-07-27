@@ -5,7 +5,7 @@ using ITensors
 using ITensorNetworks
 using ITensorUnicodePlots
 using Observers
-using HDF5
+using ITensors.HDF5
 using Random
 using Dictionaries
 
@@ -58,7 +58,7 @@ let
   # Random.seed!(1234)
   tmax = 2.
   dt = 0.01
-  N = 10
+  N = 16
   J = -1.
   g = -1.
   tau = 0.1
@@ -75,27 +75,27 @@ let
   # H = mpo(model, s)
 
   # without Qns
-  g = chain_lattice_graph(N)
-  s = siteinds("S=1/2", g)
+  #g = chain_lattice_graph(N)
+  #s = siteinds("S=1/2", g)
   # ψ = TTN(ITensorNetwork(s, x->isodd(x) ? "Up" : "Dn"))
-  ψ = TTN(ITensorNetwork(s, "Up"))
-  model = isinglin(N; J=-1., g=-1.) 
-  H = TTN(model, s)
+  #ψ = TTN(ITensorNetwork(s, "Up"))
+  #model = isinglin(N; J=-1., g=-1.) 
+  #H = TTN(model, s)
 
   # rung-decoupled Heisenberg without Qns
-  # g = chain_lattice_graph(N)
-  # s = siteinds("S=1", N)
-  # ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
-  # model = rung_decoupl_heisenberg(N)
-  # H = mpo(model, s)
+   g = chain_lattice_graph(N)
+   s = siteinds("S=1", N)
+   ψ = random_mps(s; states= x->rand(["Up","Dn"]), internal_inds_space=1)
+   model = rung_decoupl_heisenberg(N)
+   H = mpo(model, s)
   #
   model_name = "ising"
 
-  obs1 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en)
-  obs2 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en)
-  obs3 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
-  obs4 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
-  obs5 = Observer("time" => current_time, "zPol" => return_z) #, "en" => return_en) 
+  obs1 = Observer("zPol" => return_z) #, "en" => return_en)
+  obs2 = Observer("zPol" => return_z) #, "en" => return_en)
+  obs3 = Observer("zPol" => return_z) #, "en" => return_en) 
+  obs4 = Observer("zPol" => return_z) #, "en" => return_en) 
+  obs5 = Observer("zPol" => return_z) #, "en" => return_en) 
   name_obs1 = "data/"*model_name*"_two_site_svd_N=$(N)_D=$(D)"
   name_obs2 = "data/"*model_name*"_two_site_krylov_N=$(N)_D=$(D)"
   name_obs3 = "data/"*model_name*"_full_svd_N=$(N)_D=$(D)"
@@ -168,10 +168,10 @@ let
 
   expander_cache=Any[]
   ϕ5 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
-            expander_backend="none", 
-            svd_backend="krylov",
-            nsite=2,
-            # expander_cache=expander_cache,
+            expander_backend="full", 
+            svd_backend="svd",
+            nsite=1,
+            expander_cache=expander_cache,
             (observer!)=obs5,
        )
   savedata(name_obs5, obs5)
