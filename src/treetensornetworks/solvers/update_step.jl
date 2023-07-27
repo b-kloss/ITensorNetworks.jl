@@ -168,8 +168,10 @@ end
 
 function insert_local_tensor(psi::AbstractTTN, phi::ITensor, e::NamedEdge, maxdim::Int; kwargs...)
   U, S, V = svd(phi, commonind(phi, psi[src(e)]); maxdim, lefttags=tags(commonind(phi,psi[src(e)])), righttags=tags(commonind(phi,psi[src(e)])))
-  psi[dst(e)] *= S*V
   psi[src(e)] *= U
+  psi[dst(e)] *= S*V
+  # psi[dst(e)] *= phi
+
   psi = set_ortho_center(psi, [dst(e)])
   return psi, nothing
 end
@@ -184,7 +186,7 @@ function local_expansion(
 )
   direction = get(step_kwargs, :substep, 1)
   psi = orthogonalize(psi, current_ortho(region))
-  psi, phi = extract_local_tensor(psi, region) #, maxdim)
+  psi, phi = extract_local_tensor(psi, region, maxdim)
 
   nsites = (region isa AbstractEdge) ? 0 : length(region)
   PH = set_nsite(PH, nsites)

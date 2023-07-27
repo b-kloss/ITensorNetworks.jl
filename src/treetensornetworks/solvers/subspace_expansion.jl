@@ -8,14 +8,14 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
     maxdim,
     cutoff=1e-10,
     atol=1e-8,
-    expand_dir=-1, # +1 for future direction, -1 for past
+    expand_dir=+1, # +1 for future direction, -1 for past
     kwargs...,
   ) where {Vert}
 
     ### only on edges
-    (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
+    # (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
     ### only on verts
-    # (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
+    (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
 
     # determine which expansion method and svd method to use
     if expander_backend == "none"
@@ -49,7 +49,7 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
 
     if typeof(region) == NamedEdge{Int} 
       n1,n2 = (src(region),dst(region))
-      verts = expand_dir == 1 ? [n1,n2] : [n1,n2]
+      verts = expand_dir == 1 ? [n1,n2] : [n2,n1]
     else
 
       ## kind of hacky - only works for mps. More general?
@@ -69,21 +69,17 @@ function general_expander(; expander_backend="none", svd_backend="svd", kwargs..
       phi = S*V
     end
 
-    # println("=========================================")
-    # @show psi.ortho_center
-
     # subspace expansion
     psi, phi, PH = _expand_core(
       PH, psi, phi, verts, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
     )
 
     # needed to make sure we expand into the future by multiplying the zero padded bond tensor to the tensor lying in the past
-    if expand_dir == +1
-      U,S,V = svd(psi[n1]*phi, uniqueinds(psi[n1], phi); lefttags = tags(commonind(psi[n1],phi)), righttags = tags(commonind(psi[n2],phi))) 
-
-      psi[n1] = U
-      phi = S*V
-    end
+    # if expand_dir == +1
+    #   U,S,V = svd(psi[n1]*phi, uniqueinds(psi[n1], phi); lefttags = tags(commonind(psi[n1],phi)), righttags = tags(commonind(psi[n2],phi))) 
+    #   psi[n1] = U
+    #   phi = S*V
+    # end
 
     # if expansion happens on vertex, return to original form
     if typeof(region) != NamedEdge{Int} 
@@ -307,7 +303,6 @@ function _krylov_svd_solve(
     (length(d) == 0) && return nothing,nothing,nothing
 
     _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, cutoff, maxdim)
-    # @show vals_col
 
     (length(vals_col) == 0) && return nothing,nothing,nothing
 
@@ -376,13 +371,12 @@ function _two_site_expand_core(
 
   # zero-pad bond-tensor (the orthogonality center)
   if hasqns(phi)
-    # phi_indices = expand_dir > 0 ? (dag(last(new_inds)),dag(first(new_inds))) : (dag(first(new_inds)),dag(last(new_inds)))
     phi_indices = (dag(last(new_inds)),dag(first(new_inds)))
     new_phi=ITensor(eltype(phi),flux(phi), phi_indices...)
     fill!(new_phi,0.0)
   else
-    # phi_indices = expand_dir > 0 ? (dag(first(new_inds)),dag(last(new_inds))) : (dag(last(new_inds)),dag(first(new_inds)))
     phi_indices = (dag(first(new_inds)),dag(last(new_inds)))
+    # phi_indices = (dag(last(new_inds)),dag(first(new_inds)))
     new_phi = ITensor(eltype(phi), phi_indices...)
   end
 
@@ -426,8 +420,6 @@ function _full_expand_core(
   end
 
   PH2 = expander_cache[1]
-  # n1 = expand_dir>0 ? verts[2] : verts[1]
-  # n2 = expand_dir>0 ? verts[1] : verts[2]
   n1 = verts[2]
   n2 = verts[1]
 
@@ -483,11 +475,13 @@ function _full_expand_core(
 
   # zero-pad bond-tensor (the orthogonality center)
   if hasqns(phi)
-    phi_indices = (dag(new_ind1),commonind(phi,psi2))
+    # phi_indices = (dag(new_ind1),commonind(phi,psi2))
+    phi_indices = (commonind(phi,psi2),dag(new_ind1))
     new_phi=ITensor(eltype(phi),flux(phi), phi_indices...)
     fill!(new_phi,0.0)
   else
     phi_indices = (commonind(phi,psi2),dag(new_ind1))
+    # phi_indices = (dag(new_ind1),commonind(phi,psi2))
     new_phi = ITensor(eltype(phi), phi_indices...)
   end
 
