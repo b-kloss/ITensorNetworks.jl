@@ -21,7 +21,7 @@ end
 Overload of `ITensors.dmrg`.
 """
 function dmrg(H, init::AbstractTTN; kwargs...)
-  return alternating_update(eigsolve_solver(; kwargs...), general_expander(; kwargs...), H, init; kwargs...)
+  return alternating_update(eigsolve_solver(; kwargs...), H, init; kwargs...)
 end
 
 """

@@ -28,7 +28,6 @@ end
 
 function alternating_update(
   solver,
-  expander,
   PH,
   psi0::AbstractTTN;
   checkdone=nothing,
@@ -40,7 +39,9 @@ function alternating_update(
   maxdim, mindim, cutoff, noise, kwargs = process_sweeps(nsweeps; kwargs...)
 
   step_observer = get(kwargs, :step_observer!, nothing)
+  step_expander = get(kwargs, :step_expander, nothing)
   maxdim_expand = get(kwargs, :maxdim_expand, maxdim)
+  ### catch error
 
   psi = copy(psi0)
 
@@ -55,36 +56,40 @@ function alternating_update(
       PH = disk(PH)
     end
 
-    psi, PH = step_expand(
-      two_site_func,
-      # expander,
-      PH,
-      psi;
-      outputlevel,
-      sweep=sw,
-      maxdim=maxdim[sw],
-      maxdim_expand=maxdim[sw],
-      mindim=mindim[sw],
-      cutoff=cutoff[sw],
-      noise=noise[sw],
-      kwargs...,
-    )
+    if !isnothing(step_expander)
+      @timeit_debug timer "sweep expansion" begin
+        psi, PH = step_expand(
+          step_expander,
+          PH,
+          psi;
+          outputlevel,
+          sweep=sw,
+          maxdim=maxdim[sw],
+          maxdim_expand=maxdim[sw],
+          mindim=mindim[sw],
+          cutoff=cutoff[sw],
+          noise=noise[sw],
+          kwargs...,
+        )
+      end
+    end
 
     sw_time = @elapsed begin
-      psi, PH, info = update_step(
-        solver,
-        expander,
-        PH,
-        psi;
-        outputlevel,
-        sweep=sw,
-        maxdim=maxdim[sw],
-        maxdim_expand=maxdim[sw],
-        mindim=mindim[sw],
-        cutoff=cutoff[sw],
-        noise=noise[sw],
-        kwargs...,
-      )
+      @timeit_debug timer "update_step" begin
+        psi, PH, info = update_step(
+          solver,
+          PH,
+          psi;
+          outputlevel,
+          sweep=sw,
+          maxdim=maxdim[sw],
+          maxdim_expand=maxdim[sw],
+          mindim=mindim[sw],
+          cutoff=cutoff[sw],
+          noise=noise[sw],
+          kwargs...,
+        )
+      end
     end
 
     update!(step_observer; psi, PH, psi0=get(kwargs,:psi_gs, nothing), sweep=sw, outputlevel)
@@ -107,7 +112,7 @@ function alternating_update(
   return psi
 end
 
-function alternating_update(solver, expander, H::AbstractTTN, psi0::AbstractTTN; kwargs...)
+function alternating_update(solver, H::AbstractTTN, psi0::AbstractTTN; kwargs...)
   check_hascommoninds(siteinds, H, psi0)
   check_hascommoninds(siteinds, H, psi0')
   # Permute the indices to have a better memory layout
@@ -115,7 +120,7 @@ function alternating_update(solver, expander, H::AbstractTTN, psi0::AbstractTTN;
   H = ITensors.permute(H, (linkind, siteinds, linkind))
   PH = ProjTTN(H)
 
-  return alternating_update(solver, expander, PH, psi0; kwargs...)
+  return alternating_update(solver, PH, psi0; kwargs...)
 end
 
 """
@@ -137,12 +142,12 @@ each step of the algorithm when optimizing the MPS.
 Returns:
 * `psi::MPS` - time-evolved MPS
 """
-function alternating_update(solver, expander, Hs::Vector{<:AbstractTTN}, psi0::AbstractTTN; kwargs...)
+function alternating_update(solver, Hs::Vector{<:AbstractTTN}, psi0::AbstractTTN; kwargs...)
   for H in Hs
     check_hascommoninds(siteinds, H, psi0)
     check_hascommoninds(siteinds, H, psi0')
   end
   Hs .= ITensors.permute.(Hs, Ref((linkind, siteinds, linkind)))
   PHs = ProjTTNSum(Hs)
-  return alternating_update(solver, expander, PHs, psi0; kwargs...)
+  return alternating_update(solver, PHs, psi0; kwargs...)
 end

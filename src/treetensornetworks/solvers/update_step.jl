@@ -14,7 +14,7 @@ function update_sweep(nsite, graph::AbstractGraph; kwargs...)
 end
 
 function step_expand(
-  expander,
+  step_expander,
   PH,
   psi::AbstractTTN;
   cutoff::AbstractFloat=1E-16,
@@ -39,7 +39,9 @@ function step_expand(
 
   for (n, (region, step_kwargs)) in enumerate(sweep_regions)
     direction = get(step_kwargs, :substep, 1)
-    direction > 1 && continue
+    svd_func = get(kwargs, :svd_func, _svd_solve_normal)
+
+    direction == 1 && continue
     psi = orthogonalize(psi, current_ortho(region))
     psi, phi = extract_local_tensor(psi, region, maxdim)
 
@@ -48,13 +50,14 @@ function step_expand(
     PH = set_nsite(PH, nsites)
     PH = position(PH, psi, region)
 
-    psi,phi,PH = expander(
+    psi,phi,PH = step_expander(
       PH,
       psi,
       phi,
       region,
-      direction;
+      svd_func;
       maxdim = maxdim_expand,
+      expand_dir=-1,
       cutoff,
       kwargs...,
     )
@@ -77,7 +80,6 @@ end
 
 function update_step(
   solver,
-  expander,
   PH,
   psi::AbstractTTN;
   cutoff::AbstractFloat=1E-16,
@@ -110,9 +112,8 @@ function update_step(
   maxtruncerr = 0.0
   info = nothing
   for (n, (region, step_kwargs)) in enumerate(sweep_regions)
-    psi, PH, spec, info = local_expansion(
+    psi, PH, spec, info = local_update(
       solver,
-      expander,
       PH,
       psi,
       region;
@@ -229,10 +230,13 @@ function insert_local_tensor(
 end
 
 function insert_local_tensor(psi::AbstractTTN, phi::ITensor, e::NamedEdge, maxdim::Int; kwargs...)
-  U, S, V = svd(phi, commonind(phi, psi[src(e)]); maxdim, lefttags=tags(commonind(phi,psi[src(e)])), righttags=tags(commonind(phi,psi[src(e)])))
-  psi[src(e)] *= U
-  psi[dst(e)] *= S*V
-  # psi[dst(e)] *= phi
+  # if dim(commonind(phi, psi[src(e)])) > maxdim
+  #   U, S, V = svd(phi, commonind(phi, psi[src(e)]); maxdim, lefttags=tags(commonind(phi,psi[src(e)])), righttags=tags(commonind(phi,psi[src(e)])))
+  #   psi[src(e)] *= U
+  #   psi[dst(e)] *= S*V
+  # else
+    psi[dst(e)] *= phi
+  # end
 
   psi = set_ortho_center(psi, [dst(e)])
   return psi, nothing
@@ -243,10 +247,12 @@ current_ortho(::Type{<:Vector{<:V}}, st) where {V} = first(st)
 current_ortho(::Type{NamedEdge{V}}, st) where {V} = src(st)
 current_ortho(st) = current_ortho(typeof(st), st)
 
-function local_expansion(
-  solver, expander, PH, psi, region; outputlevel, cutoff, maxdim, maxdim_expand=maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
+function local_update(
+  solver, PH, psi, region; outputlevel, cutoff, maxdim, maxdim_expand=maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
 )
   direction = get(step_kwargs, :substep, 1)
+  expander = get(kwargs, :expander, nothing)
+
   psi = orthogonalize(psi, current_ortho(region))
   psi, phi = extract_local_tensor(psi, region, maxdim)
 
@@ -254,25 +260,39 @@ function local_expansion(
   PH = set_nsite(PH, nsites)
   PH = position(PH, psi, region)
 
-  # psi,phi,PH = expander(
-  #   PH,
-  #   psi,
-  #   phi,
-  #   region,
-  #   direction;
-  #   maxdim = maxdim_expand,
-  #   cutoff,
-  #   kwargs...,
-  # )
+  if !isnothing(expander)
+    svd_func = get(kwargs, :svd_func, _svd_solve_normal)
+    @timeit_debug timer "local expansion" begin
+      psi,phi,PH = expander(
+        PH,
+        psi,
+        phi,
+        region,
+        svd_func;
+        direction,
+        maxdim = maxdim_expand,
+        cutoff,
+        kwargs...,
+      )
+    end
+
+    # update environment
+    nsites = (region isa AbstractEdge) ? 0 : length(region)
+    PH = set_nsite(PH, nsites)
+    PH = position(PH, psi, region)
+  end
+
 
   info = []
   ### solver behaves weirdly sometimes, stating that PH is not hermitian; this fixes it ###
-  while true
-    try 
-      phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
-      break
-    catch e
-      @show e
+  @timeit_debug timer "local solve" begin
+    while true
+      try 
+        phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
+        break
+      catch e
+        @show e
+      end
     end
   end
 

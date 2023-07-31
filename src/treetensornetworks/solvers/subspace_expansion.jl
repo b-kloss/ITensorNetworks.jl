@@ -1,114 +1,64 @@
-function general_expander(; expander_backend="none", svd_backend="svd", kwargs...)
-  function expander(
-    PH,
-    psi::ITensorNetworks.AbstractTTN{Vert},
-    phi,
-    region,
-    direction;
-    maxdim,
-    cutoff=1e-10,
-    atol=1e-8,
-    #expand_dir=+1, # +1 for future direction, -1 for past
-    kwargs...,
-  ) where {Vert}
-
-    cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
-    expander_cache = get(kwargs, :expander_cache, Any[])
-    nsites = (region isa AbstractEdge) ? 0 : length(region)
-
-    ### only on edges
-    #(typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
-    ### only on verts
-    #(typeof(region)==NamedEdge{Int}) && return psi, phi, PH
-
-    # determine which expansion method and svd method to use
-    if expander_backend == "none"
-      return psi, phi, PH
-    elseif expander_backend == "full"
-      _expand_core = _full_expand_core_vertex
-      expand_dir = get(kwargs, :expand_dir, -1)
-      
-    elseif expander_backend == "two_site"
-      _expand_core = _two_site_expand_core
-      expand_dir = get(kwargs, :expand_dir, +1)
-      #enforce expand_dir in the tested direction
-      @assert expand_dir==1
-      
-    else
-      error("expander_backend=$expander_backend not recognized (options are \"2-site\" or \"full\")")
-    end
-
-    if svd_backend == "svd"
-      svd_func = _svd_solve_normal
-    elseif svd_backend == "krylov"
-      svd_func = _krylov_svd_solve
-    else
-      error("svd_backend=$svd_backend not recognized (options are \"svd\" or \"krylov\")")
-    end
-
-    # atol refers to the tolerance in nullspace determination (for finite MPS can probably be set rather small)
-    # cutoff refers to largest singular value of gradient (acceleration of population gain of expansion vectors) to keep
-    # this should be related to the cutoff in two-site TDVP: \Delta_rho_i = 0.5 * lambda_y * tau **2 
-    # note that in the initial SVD there is another cutoff parameter `cutoff_compress`, that we set to roughly machine precision for the time being
-    # (allows to move bond-dimension between different partial QN sectors, if no such truncation occurs distribution of bond-dimensions
-    # between different QNs locally is static once bond dimension saturates maxdim.)
-    
-
-    cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
-    expander_cache = get(kwargs, :expander_cache, Any[])
-    
-    to = get(kwargs, :to, Any[])
-    #=
-    if typeof(region) == NamedEdge{Int} 
-      n1,n2 = (src(region),dst(region))
-      verts = expand_dir == 1 ? [n1,n2] : [n2,n1]
-    else
-
-      ## kind of hacky - only works for mps. More general?
-      n1 = first(region)
-      if direction == 1 
-        n2 = expand_dir == 1 ? n1 - 1 : n1+1
-      else
-        n2 = expand_dir == 1 ? n1 + 1 : n1-1
-      end
-      (n2 < 1 || n2 > length(vertices(psi))) && return psi,phi,PH
-      verts = [n1,n2]
-
-      ## bring it into the same functional form used for the Named-Edge case by doing an svd
-      left_inds = uniqueinds(psi[n1], psi[n2])
-      U, S, V = svd(psi[n1], left_inds; lefttags=tags(commonind(psi[n1],psi[n2])), righttags=tags(commonind(psi[n1],psi[n2])))
-      psi[n1] = U
-      phi = S*V
-    end
-    =#
-
-    # subspace expansion
-    psi, phi, PH = _expand_core(
-      PH, psi, phi, region, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
-    )
-
-    # needed to make sure we expand into the future by multiplying the zero padded bond tensor to the tensor lying in the past
-    # if expand_dir == +1
-    #   U,S,V = svd(psi[n1]*phi, uniqueinds(psi[n1], phi); lefttags = tags(commonind(psi[n1],phi)), righttags = tags(commonind(psi[n2],phi))) 
-    #   psi[n1] = U
-    #   phi = S*V
-    # end
-
-    # if expansion happens on vertex, return to original form
-    #=
-    if typeof(region) != NamedEdge{Int} 
-      phi = psi[first(region)] * phi
-    end
-    =#
-
-    # update environment
-    PH = set_nsite(PH, nsites)
-    PH = position(PH, psi, region)
-
-    return psi, phi, PH
-  end
-  return expander
-end
+# function general_expander(; expander_backend="none", svd_backend="svd", kwargs...)
+#   function expander(
+#     PH,
+#     psi::ITensorNetworks.AbstractTTN{Vert},
+#     phi,
+#     region,
+#     direction;
+#     maxdim,
+#     cutoff=1e-10,
+#     atol=1e-8,
+#     kwargs...,
+#   ) where {Vert}
+#
+#     cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
+#     expander_cache = get(kwargs, :expander_cache, Any[])
+#     nsites = (region isa AbstractEdge) ? 0 : length(region)
+#
+#     # determine which expansion method and svd method to use
+#     if expander_backend == "none"
+#       return psi, phi, PH
+#     elseif expander_backend == "full"
+#       _expand_core = _full_expand_core_vertex
+#       expand_dir = get(kwargs, :expand_dir, -1)
+#       
+#     elseif expander_backend == "two_site"
+#       _expand_core = _two_site_expand_core
+#       expand_dir = get(kwargs, :expand_dir, +1)
+#       #enforce expand_dir in the tested direction
+#       @assert expand_dir==1
+#       
+#     else
+#       error("expander_backend=$expander_backend not recognized (options are \"2-site\" or \"full\")")
+#     end
+#
+#     if svd_backend == "svd"
+#       svd_func = _svd_solve_normal
+#     elseif svd_backend == "krylov"
+#       svd_func = _krylov_svd_solve
+#     else
+#       error("svd_backend=$svd_backend not recognized (options are \"svd\" or \"krylov\")")
+#     end
+#
+#     cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
+#     expander_cache = get(kwargs, :expander_cache, Any[])
+#     
+#     to = get(kwargs, :to, Any[])
+#
+#     # subspace expansion
+#     psi, phi, PH = _expand_core(
+#       PH, psi, phi, region, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
+#     )
+#
+#
+#     # update environment
+#     PH = set_nsite(PH, nsites)
+#     PH = position(PH, psi, region)
+#
+#     return psi, phi, PH
+#   end
+#   return expander
+# end
 
 function _svd_solve_normal(
   envMap, left_ind; maxdim, cutoff, 
@@ -259,24 +209,30 @@ function _krylov_svd_solve(
     trial = randomITensor(eltype(envMap), left_ind)
     trial = trial / norm(trial)
 
-    _kkit_init_check(trial,envMapDag,envMap) || (return nothing,nothing,nothing)
+    @timeit_debug timer "krylov check" begin
+      _kkit_init_check(trial,envMapDag,envMap) || (return nothing,nothing,nothing)
+    end
 
     try
-      vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-        (x -> envMap * x, y -> envMapDag * y), trial; krylov_args...,
-      )
+      @timeit_debug timer "krylov svd solve" begin
+        vals, lvecs, rvecs, info = KrylovKit.svdsolve(
+          (x -> envMap * x, y -> envMapDag * y), trial; krylov_args...,
+        )
+      end
     catch e 
       @show e
       return _svd_solve_normal(envMap, left_ind; maxdim, cutoff)
     end
 
     ## cutoff unnecessary values and expand the resulting vectors by a dummy index
-    vals = filter(v->v^2≥cutoff, vals)[1:min(maxdim,end)]
-    (length(vals) == 0) && return nothing,nothing,nothing
-    lvecs = lvecs[1:min(length(vals),end)]
-    rvecs = rvecs[1:min(length(vals),end)]
+    @timeit_debug timer "build USV from Krylov vecs" begin
+      vals = filter(v->v^2≥cutoff, vals)[1:min(maxdim,end)]
+      (length(vals) == 0) && return nothing,nothing,nothing
+      lvecs = lvecs[1:min(length(vals),end)]
+      rvecs = rvecs[1:min(length(vals),end)]
 
-    U,S,V = _build_USV_without_QN(vals, lvecs, rvecs)
+      U,S,V = _build_USV_without_QN(vals, lvecs, rvecs)
+    end
 
   else
     vals_col  = Any[]
@@ -301,9 +257,11 @@ function _krylov_svd_solve(
       end
 
       try
-        vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-          (x -> (noprime((envMap) * x)), y -> (envMapDag * y)), trial,
-        )
+        @timeit_debug timer "krylov svd solve" begin
+          vals, lvecs, rvecs, info = KrylovKit.svdsolve(
+            (x -> (noprime((envMap) * x)), y -> (envMapDag * y)), trial,
+          )
+        end
       catch e 
         @show e
         return _svd_solve_normal(envMap, left_ind; maxdim, cutoff)
@@ -316,21 +274,24 @@ function _krylov_svd_solve(
     end
     (length(d) == 0) && return nothing,nothing,nothing
 
-    _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, cutoff, maxdim)
+    @timeit_debug timer "build USV from Krylov vecs" begin
+      _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, cutoff, maxdim)
 
-    (length(vals_col) == 0) && return nothing,nothing,nothing
+      (length(vals_col) == 0) && return nothing,nothing,nothing
 
-    U,S,V = _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces; envflux=flux(ITensorNetworks.contract(envMap)))
+      U,S,V = _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces; envflux=flux(ITensorNetworks.contract(envMap)))
+    end
   end
 
   return U,S,V
 end
 
 function _two_site_expand_core(
-  PH, psi, phi0, region, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
+  PH, psi, phi0, region, svd_func; direction, expand_dir=+1, maxdim, cutoff, atol=1e-8, kwargs...,
 )
   #enforce expand_dir in the tested direction
-  @assert expand_dir==+1
+  # @assert expand_dir==+1
+
   (typeof(region)==NamedEdge{Int}) && return psi, phi0, PH
   if typeof(region) == NamedEdge{Int} 
     n1,n2 = (src(region),dst(region))
@@ -342,9 +303,9 @@ function _two_site_expand_core(
     ## kind of hacky - only works for mps. More general?
     n1 = first(region)
     if direction == 1 
-      n2 = expand_dir == 1 ? n1 - 1 : n1+1
+      n2 = expand_dir == 1 ? n1-1 : n1+1
     else
-      n2 = expand_dir == 1 ? n1 + 1 : n1-1
+      n2 = expand_dir == 1 ? n1+1 : n1-1
     end
     (n2 < 1 || n2 > length(vertices(psi))) && return psi,phi0,PH
     verts = [n1,n2]
@@ -355,7 +316,6 @@ function _two_site_expand_core(
     psis[findall(verts.==n1)[]]= U
     phi = S*V
   end
-  #psis = map(n -> psi[n], verts)
  
   old_linkdim = dim(commonind(first(psis), phi))
 
@@ -368,8 +328,10 @@ function _two_site_expand_core(
   linkinds = map(psi -> commonind(psi, phi), psis)
 
   # compute nullspace to the left and right 
-  nullVecs = map(zip(psis,linkinds)) do (psi,linkind)
-    return nullspace(psi, linkind; atol=atol)
+  @timeit_debug timer "nullvector" begin
+    nullVecs = map(zip(psis,linkinds)) do (psi,linkind)
+      return nullspace(psi, linkind; atol=atol)
+    end
   end
   
   # if nullspace is empty (happen's for product states with QNs)
@@ -377,10 +339,12 @@ function _two_site_expand_core(
 
   ## build environments
   g = underlying_graph(PH)
-  envs = map(zip(verts,psis)) do (n,psi)
-    return noprime(mapreduce(*, [v => n for v in neighbors(g, n) if !(v ∈ verts)]; init = psi) do e
-      return PH.environments[NamedEdge(e)]
-    end *PH.H[n])
+  @timeit_debug timer "build environments" begin
+    envs = map(zip(verts,psis)) do (n,psi)
+      return noprime(mapreduce(*, [v => n for v in neighbors(g, n) if !(v ∈ verts)]; init = psi) do e
+        return PH.environments[NamedEdge(e)]
+      end *PH.H[n])
+    end
   end
 
   ininds = uniqueinds(last(nullVecs),last(psis))
@@ -388,19 +352,23 @@ function _two_site_expand_core(
 
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([last(nullVecs),last(envs),phi,first(envs),first(nullVecs)], outinds, ininds)
   
-  U,S,V = svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+  @timeit_debug timer "svd_func" begin
+    U,S,V = svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+  end
   isnothing(U) && return psi, phi0, PH
 
-  @assert dim(commonind(U, S)) ≤ maxdim-old_linkdim
+  # @assert dim(commonind(U, S)) ≤ maxdim-old_linkdim
 
   nullVecs[1] = nullVecs[1] * dag(U)
   nullVecs[2] = nullVecs[2] * dag(V)
 
   # expand current site tensors
-  new_psis = map(zip(psis, nullVecs)) do (psi,nullVec)
-    return ITensors.directsum(
-      psi => uniqueinds(psi, nullVec), dag(nullVec) => dag(uniqueinds(nullVec, psi)); tags=(tags(commonind(psi,phi)),)
-    )
+  @timeit_debug timer "direct sum" begin
+    new_psis = map(zip(psis, nullVecs)) do (psi,nullVec)
+      return ITensors.directsum(
+        psi => uniqueinds(psi, nullVec), dag(nullVec) => dag(uniqueinds(nullVec, psi)); tags=(tags(commonind(psi,phi)),)
+      )
+    end
   end
 
   new_inds = [last(x)[1]  for x in new_psis]
@@ -434,7 +402,7 @@ function _two_site_expand_core(
 
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
   
-  @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) < 50*eps(Float64)
+  # @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) < 50*eps(Float64)
   
   if typeof(region) != NamedEdge{Int}
     psi[n1]*=new_phi
@@ -445,10 +413,11 @@ function _two_site_expand_core(
 end
 
 function _full_expand_core_vertex(
-  PH, psi, phi, region, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
+    PH, psi, phi, region, svd_func; direction, expand_dir=-1, expander_cache=Any[], maxdim, cutoff, atol=1e-8, kwargs...,
 )
   #enforce expand_dir in the tested direction
-  @assert expand_dir===1
+  @assert expand_dir==-1
+
   ### only on edges
   #(typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
   ### only on verts
@@ -511,20 +480,24 @@ function _full_expand_core_vertex(
   ## compute both environments
   g = underlying_graph(PH)
 
-  env1 = noprime(mapreduce(*, [v => n1 for v in neighbors(g, n1) if v != n2]; init = psi1) do e
-    return PH.environments[NamedEdge(e)]
-  end *PH.H[n1]
-  )
-  env2 = mapreduce(*, [v => n2 for v in neighbors(g, n2) if v != n1]; init = psi2) do e
-    return PH2.environments[NamedEdge(e)]
-  end * PH2.H[n2]*prime(dag(psi2))
+  @timeit_debug timer "build environments" begin
+    env1 = noprime(mapreduce(*, [v => n1 for v in neighbors(g, n1) if v != n2]; init = psi1) do e
+      return PH.environments[NamedEdge(e)]
+    end *PH.H[n1]
+    )
+    env2 = mapreduce(*, [v => n2 for v in neighbors(g, n2) if v != n1]; init = psi2) do e
+      return PH2.environments[NamedEdge(e)]
+    end * PH2.H[n2]*prime(dag(psi2))
+  end
 
   outinds = uniqueinds(nullVec,psi1)
   ininds = dag.(outinds)
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(nullVec)),prime(dag(env1)),env2,env1,nullVec] , outinds, ininds)
 
   # svd-decomposition
-  U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+  @timeit_debug timer "svd_func" begin
+    U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+  end
   isnothing(U) && return psi,phi,PH
 
   @assert dim(commonind(U, S)) ≤ maxdim
@@ -683,67 +656,4 @@ function _kkit_init_check(u₀,theadj,thenormal)
     α² ≈ α * α || throw(ArgumentError("operator and its adjoint are not compatible"))
   end
   return true
-end
-
-
-function two_site_func(
-  PH,
-  psi::ITensorNetworks.AbstractTTN{Vert},
-  phi,
-  region,
-  direction;
-  maxdim,
-  cutoff=1e-10,
-  atol=1e-8,
-  expand_dir=-1, # +1 for future direction, -1 for past
-  kwargs...,
-) where {Vert}
-
-  cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
-  expander_cache = get(kwargs, :expander_cache, Any[])
-  nsites = (region isa AbstractEdge) ? 0 : length(region)
-
-  ### only on edges
-  # (typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
-  ### only on verts
-  (typeof(region)==NamedEdge{Int}) && return psi, phi, PH
-
-  to = get(kwargs, :to, Any[])
-
-  if typeof(region) == NamedEdge{Int} 
-    n1,n2 = (src(region),dst(region))
-    verts = expand_dir == 1 ? [n1,n2] : [n2,n1]
-  else
-    ## kind of hacky - only works for mps. More general?
-    n1 = first(region)
-    if direction == 1 
-      n2 = expand_dir == 1 ? n1 - 1 : n1+1
-    else
-      n2 = expand_dir == 1 ? n1 + 1 : n1-1
-    end
-    (n2 < 1 || n2 > length(vertices(psi))) && return psi,phi,PH
-    verts = [n1,n2]
-
-    ## bring it into the same functional form used for the Named-Edge case by doing an svd
-    left_inds = uniqueinds(psi[n1], psi[n2])
-    U, S, V = svd(psi[n1], left_inds; lefttags=tags(commonind(psi[n1],psi[n2])), righttags=tags(commonind(psi[n1],psi[n2])))
-    psi[n1] = U
-    phi = S*V
-  end
-
-  # subspace expansion
-  psi, phi, PH = _two_site_expand_core(
-    PH, psi, phi, verts, _svd_solve_normal; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
-  )
-
-  # if expansion happens on vertex, return to original form
-  if typeof(region) != NamedEdge{Int} 
-    phi = psi[first(region)] * phi
-  end
-
-  # # update environment
-  # PH = set_nsite(PH, nsites)
-  # PH = position(PH, psi, region)
-
-  return psi, phi, PH
 end

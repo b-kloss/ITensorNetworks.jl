@@ -52,6 +52,8 @@ using NamedGraphs:
   parent_vertices_to_vertices,
   not_implemented
 
+using ITensors.NDTensors: timer
+
 include("imports.jl")
 
 # TODO: Move to `DataGraphs.jl`
