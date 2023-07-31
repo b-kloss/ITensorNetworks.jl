@@ -56,6 +56,7 @@ function step_expand(
       phi,
       region,
       svd_func;
+      direction=direction,
       maxdim = maxdim_expand,
       expand_dir=-1,
       cutoff,
