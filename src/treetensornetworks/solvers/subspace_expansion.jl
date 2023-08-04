@@ -61,10 +61,11 @@
 # end
 
 function _svd_solve_normal(
-  envMap, left_ind; maxdim, cutoff, 
+  envMap, left_ind; maxdim, cutoff 
 )
-
   M = ITensors.ITensorNetworkMaps.contract(envMap)
+ #@show inds(M)
+  #@show norm(M)
   norm(M) ≤ eps(Float64) && return nothing,nothing,nothing
 
   U,S,V = svd(
@@ -81,6 +82,10 @@ function _svd_solve_normal(
 
   return U,S,V
 end
+
+#_svd_solve_normal(envMap,envMapDag, left_ind;kwargs...)=svd_solve_normal(envMap, left_ind;maxdim=get(::maxdim,kwargs),cutoff=cutoff)
+#_svd_solve_normal(T,envMap,envMapDag, left_ind;kwargs...)=svd_solve_normal(envMap, left_ind;maxdim=maxdim,cutoff=cutoff)
+
 
 function _build_USV_without_QN(vals, lvecs, rvecs)
   # attach trivial index to left/right eigenvectors to take directsum over it
@@ -198,13 +203,11 @@ function _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, c
   deleteat!(remainingSpaces,  dropblocks)
 end
 
-function _krylov_svd_solve(
-  envMap, left_ind; maxdim, cutoff,# kwargs...
+function _krylov_svd_solve(T,
+  envMap,envMapDag, left_ind; flux=flux(contract(envMap)),maxdim, cutoff,# kwargs...
 )
   maxdim = min(maxdim, 15)
-  envMapDag = adjoint(envMap)
   krylov_args = (tol = cutoff, krylovdim = maxdim, maxiter = 1)
-
   if !hasqns(left_ind)
     trial = randomITensor(eltype(envMap), left_ind)
     trial = trial / norm(trial)
@@ -214,9 +217,10 @@ function _krylov_svd_solve(
     end
 
     try
+      
       @timeit_debug timer "krylov svd solve" begin
         vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-          (x -> envMap * x, y -> envMapDag * y), trial; krylov_args...,
+          (x -> envMap*x, y -> envMapDag*y), trial; krylov_args...,
         )
       end
     catch e 
@@ -230,7 +234,6 @@ function _krylov_svd_solve(
       (length(vals) == 0) && return nothing,nothing,nothing
       lvecs = lvecs[1:min(length(vals),end)]
       rvecs = rvecs[1:min(length(vals),end)]
-
       U,S,V = _build_USV_without_QN(vals, lvecs, rvecs)
     end
 
@@ -238,28 +241,28 @@ function _krylov_svd_solve(
     vals_col  = Any[]
     lvecs_col = Any[]
     rvecs_col = Any[]
-    d = Vector{real(eltype(envMap))}()
+    d = Vector{real(T)}()
     remainingSpaces = Any[]
 
     for s in space(left_ind[1])
       last(s)==0 && continue
 
       theqn=first(s)
-      trial = randomITensor(eltype(envMap), theqn, left_ind)
-
-      ##some checks to not pass singular/zero-size problem to KrylovKit
-      adjtrial=envMapDag(trial)
-      trial2=envMap(adjtrial)
+      trial = randomITensor(T, theqn, left_ind)
+      adjtrial=envMapDag*trial
+      trial2=envMap*adjtrial
+      
       if size(storage(adjtrial))==(0,) || size(storage(trial2))==(0,)
         continue
       elseif ! _kkit_init_check(trial, envMapDag,envMap)
         continue
       end
-
+      adjtrial=nothing
+      trial2=nothing
       try
         @timeit_debug timer "krylov svd solve" begin
           vals, lvecs, rvecs, info = KrylovKit.svdsolve(
-            (x -> (noprime((envMap) * x)), y -> (envMapDag * y)), trial,
+            (x -> envMap*x, y -> envMapDag*y), trial; krylov_args...,
           )
         end
       catch e 
@@ -268,7 +271,7 @@ function _krylov_svd_solve(
       end
       push!(vals_col,  vals)
       push!(lvecs_col, lvecs)
-      push!(rvecs_col, conj.(dag.(rvecs)))  ###is the conjugate here justified or not?
+      push!(rvecs_col, conj.(dag.(rvecs)))  ###is the conjugate here justified or not?  
       push!(remainingSpaces, s)
       append!(d, vals)
     end
@@ -278,12 +281,19 @@ function _krylov_svd_solve(
       _truncate_blocks!(d, vals_col, lvecs_col, rvecs_col, remainingSpaces, cutoff, maxdim)
 
       (length(vals_col) == 0) && return nothing,nothing,nothing
-
-      U,S,V = _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces; envflux=flux(ITensorNetworks.contract(envMap)))
+      U,S,V = _build_USV_with_QN(vals_col, lvecs_col, rvecs_col, remainingSpaces; envflux=flux)
     end
   end
 
   return U,S,V
+end
+
+function implicit_nullspace(A, linkind)
+  ###only works when applied in the direction of the environment tensor, not the other way (due to use of ITensorNetworkMap which is not reversible)
+  outind=uniqueinds(A,linkind)
+  inind=outind  #?
+  P=ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(A),linkind),prime(A,linkind)],inind,outind)
+  return x::ITensor -> x-P(x)
 end
 
 function _two_site_expand_core(
@@ -330,12 +340,14 @@ function _two_site_expand_core(
   # compute nullspace to the left and right 
   @timeit_debug timer "nullvector" begin
     nullVecs = map(zip(psis,linkinds)) do (psi,linkind)
-      return nullspace(psi, linkind; atol=atol)
+      #return nullspace(psi, linkind; atol=atol)
+      return implicit_nullspace(psi, linkind)
     end
   end
   
+  ##ToDo: Remove since not applicable anymore.
   # if nullspace is empty (happen's for product states with QNs)
-  sum(norm.(nullVecs) .== 0) > 0 && return psi, phi0, PH
+  #sum(norm.(nullVecs) .== 0) > 0 && return psi, phi0, PH
 
   ## build environments
   g = underlying_graph(PH)
@@ -346,42 +358,42 @@ function _two_site_expand_core(
       end *PH.H[n])
     end
   end
+  envs=[last(nullVecs)(last(envs)),first(nullVecs)(first(envs))]
 
-  ininds = uniqueinds(last(nullVecs),last(psis))
-  outinds = uniqueinds(first(nullVecs),first(psis))
-
-  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([last(nullVecs),last(envs),phi,first(envs),first(nullVecs)], outinds, ininds)
+  ininds = uniqueinds(last(psis),phi)
+  outinds = uniqueinds(first(psis),phi)
+  cin=combiner(ininds)
+  cout=combiner(outinds)
+  envs=[cin*envs[1],cout*envs[2]]
+  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([last(envs),phi,first(envs)], uniqueinds(inds(cout),outinds), uniqueinds(inds(cin),ininds))
   
+  
+  envMapDag = adjoint(envMap)
+
   @timeit_debug timer "svd_func" begin
-    U,S,V = svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+    if svd_func==ITensorNetworks._svd_solve_normal
+      U,S,V = svd_func(envMap, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
+    else
+      U,S,V = svd_func(eltype(envMap),envMap,envMapDag, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
+    end
   end
   isnothing(U) && return psi, phi0, PH
-
-  # @assert dim(commonind(U, S)) ≤ maxdim-old_linkdim
-
-  nullVecs[1] = nullVecs[1] * dag(U)
-  nullVecs[2] = nullVecs[2] * dag(V)
-
-  # expand current site tensors
+  
+  U *= dag(cout)
+  V *= dag(cin)
   @timeit_debug timer "direct sum" begin
-    new_psis = map(zip(psis, nullVecs)) do (psi,nullVec)
+    new_psis = map(zip(psis, [U,V])) do (psi,exp_basis)
+      #@show tags(commonind(psi,phi))
       return ITensors.directsum(
-        psi => uniqueinds(psi, nullVec), dag(nullVec) => dag(uniqueinds(nullVec, psi)); tags=(tags(commonind(psi,phi)),)
+        psi => commonind(psi, phi), exp_basis => uniqueind(exp_basis, psi); tags=tags(commonind(psi,phi)),
       )
     end
   end
-
-  new_inds = [last(x)[1]  for x in new_psis]
+  new_inds = [last(x)  for x in new_psis]
   new_psis = [first(x) for x in new_psis]
-
-  combiners = map(new_ind -> combiner(new_ind; tags=tags(new_ind), dir=dir(new_ind)), new_inds)
-
   @assert sum(findmax.(dim.(new_inds))[1] .> maxdim) == 0
-
-  # zero-pad bond-tensor (the orthogonality center)
+  
   phi_indices = replace(inds(phi), (commonind(phi,psis[n]) => dag(new_inds[n]) for n in 1:2)...)
-  #phi_indices = replace(phi_indices, commonind(phi,psis[2]) => dag(new_inds[2]))
- 
   if hasqns(phi)
     new_phi=ITensor(eltype(phi),flux(phi), phi_indices...)
     fill!(new_phi,0.0)
@@ -393,15 +405,17 @@ function _two_site_expand_core(
     v = phi[I]
     !iszero(v) && (return new_phi[I]=v)
   end
+  ##ToDo:maybe trigger with debug flag
+  #old_twosite_tensor = first(psis)*phi*last(psis)
 
-  old_twosite_tensor = first(psis)*phi*last(psis)
-
+  combiners = map(new_ind -> combiner(new_ind; tags=tags(new_ind), dir=dir(new_ind)), new_inds)
   for (v,new_psi,C) in zip(verts,new_psis,combiners)
     psi[v] = noprime(new_psi*C)
   end
 
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
-  
+  #@show dims(new_phi), dims(phi)
+  ##ToDo:maybe trigger with debug flag
   # @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) < 50*eps(Float64)
   
   if typeof(region) != NamedEdge{Int}
@@ -465,16 +479,16 @@ function _full_expand_core_vertex(
 
   # don't expand if we are already at maxdim
   ## make more transparent that this is not the normal maxdim arg but maxdim_expand
+  ## when would this even happen?
   old_linkdim >= maxdim && return psi, phi, PH
 
   # compute nullspace to the left and right 
   linkind_l = commonind(psi1, psi2)
-  ### ToDo: implement a composite LinearMap for Nullspace projector
-  nullVec = nullspace(psi1, linkind_l; atol=atol)
+  nullVec = implicit_nullspace(psi1, linkind_l)
 
   # if nullspace is empty (happen's for product states with QNs)
   ## ToDo implement norm or equivalent for a generic LinearMap (i guess via sampling a random vector)
-  norm(nullVec) == 0.0 && return psi, phi, PH
+  #norm(nullVec) == 0.0 && return psi, phi, PH
 
 
   ## compute both environments
@@ -485,28 +499,44 @@ function _full_expand_core_vertex(
       return PH.environments[NamedEdge(e)]
     end *PH.H[n1]
     )
+    env2p = noprime(mapreduce(*, [v => n2 for v in neighbors(g, n2) if v != n1]; init = psi2) do e
+      return PH.environments[NamedEdge(e)]
+    end *PH.H[n2]
+    )
+    
+
     env2 = mapreduce(*, [v => n2 for v in neighbors(g, n2) if v != n1]; init = psi2) do e
       return PH2.environments[NamedEdge(e)]
     end * PH2.H[n2]*prime(dag(psi2))
   end
 
-  outinds = uniqueinds(nullVec,psi1)
-  ininds = dag.(outinds)
-  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(nullVec)),prime(dag(env1)),env2,env1,nullVec] , outinds, ininds)
+  env1=nullVec(env1)
 
+  outinds = uniqueinds(psi1,psi2)
+  ininds = dag.(outinds)
+  cout=combiner(outinds)
+  env1 *= cout
+  env2p *= prime(dag(psi[n2]),commonind(dag(psi[n2]),dag(psi[n1])))
+  env2p2= replaceprime(env2p * replaceprime(dag(env2p),0=>2),2=>1)
+
+
+  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(env1)),(env2-env2p2),env1] , uniqueinds(cout,outinds), uniqueinds(dag(cout),ininds))
+  envMapDag=adjoint(envMap)
   # svd-decomposition
   @timeit_debug timer "svd_func" begin
-    U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
+    if svd_func==ITensorNetworks._svd_solve_normal
+      U,S,_ = svd_func(envMap, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
+    else
+      U,S,_= svd_func(eltype(envMap),envMap,envMapDag,uniqueinds(cout,outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
+    end
   end
   isnothing(U) && return psi,phi,PH
 
   @assert dim(commonind(U, S)) ≤ maxdim
 
-  nullVec = nullVec*dag(U)
-
-  # expand current site tensors
+  nullVec = dag(cout)*U
   new_psi1, new_ind1 = ITensors.directsum(
-    psi1 => uniqueinds(psi1, nullVec), dag(nullVec) => uniqueinds(dag(nullVec), psi1); tags=(tags(commonind(psi1,phi)),)
+    psi1 => uniqueinds(psi1, nullVec), nullVec => uniqueinds(nullVec, psi1); tags=(tags(commonind(psi1,phi)),)
   )
   new_ind1 = new_ind1[1]
   @assert dim(new_ind1) <= maxdim
@@ -527,11 +557,8 @@ function _full_expand_core_vertex(
     !iszero(v) && (return new_phi[I]=v)
   end
 
-  #old_twosite_tensor=phi*psi[n1]
   psi[n1] = noprime(new_psi1*Cl)
   new_phi = dag(Cl)*new_phi
-  #@show norm(new_phi*psi[n1] - old_twosite_tensor) 
-  #@assert norm(new_phi*psi[n1] - old_twosite_tensor) < 50*eps(Float64)
 
   return psi, new_phi, PH
 end
@@ -602,7 +629,7 @@ function _full_expand_core(
   # svd-decomposition
   U,S,_= svd_func(envMap, outinds; maxdim=maxdim-old_linkdim, cutoff=cutoff)
   isnothing(U) && return psi,phi,PH
-
+  @show storage(S)
   @assert dim(commonind(U, S)) ≤ maxdim
 
   nullVec = nullVec*dag(U)
@@ -646,9 +673,10 @@ end
 function _kkit_init_check(u₀,theadj,thenormal)
   β₀ = norm(u₀)
   iszero(β₀) && throw(ArgumentError("initial vector should not have norm zero"))
-  v₀ = theadj(u₀)
+  v₀ = theadj * u₀
   α = norm(v₀) / β₀
-  Av₀ = thenormal(v₀) # apply operator
+  #@show  α, norm(contract(thenormal)), norm(contract(theadj))
+  Av₀ = thenormal * v₀ # apply operator
   α² = dot(u₀, Av₀) / β₀^2
   if norm(α²) < sqrt(eps(Float64))
     return false
