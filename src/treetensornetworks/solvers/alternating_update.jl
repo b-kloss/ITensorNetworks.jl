@@ -93,7 +93,7 @@ function alternating_update(
       end
     end
 
-    update!(step_observer; psi, PH, psi0=get(kwargs,:psi_gs, nothing), sweep=sw, outputlevel)
+    update!(step_observer; psi, PH, psi0=get(kwargs,:psi_gs, nothing), sweep=sw, sw_time, outputlevel)
     if (!isempty(name_obs) && mod(sw,5) == 0)
       kwargs[:save_func](name_obs, step_observer)
     end
