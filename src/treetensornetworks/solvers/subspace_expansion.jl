@@ -92,6 +92,7 @@ function _two_site_expand_core(
 
     ## kind of hacky - only works for mps. More general?
     n1 = first(region)
+    theflux=flux(psi[n1])
     if direction == 1 
       n2 = expand_dir == 1 ? n1-1 : n1+1
     else
@@ -154,7 +155,7 @@ function _two_site_expand_core(
     if svd_func==ITensorNetworks._svd_solve_normal
       U,S,V = svd_func(envMap, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
     else
-      U,S,V = svd_func(eltype(envMap),envMap,envMapDag, uniqueinds(inds(cout),outinds); flux=flux(psi), maxdim=maxdim-old_linkdim, cutoff=cutoff)
+      U,S,V = svd_func(eltype(envMap),envMap,envMapDag, uniqueinds(inds(cout),outinds); flux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
     end
   end
   isnothing(U) && return psi, phi0, PH
