@@ -114,8 +114,10 @@ include(joinpath("treetensornetworks", "solvers", "solver_utils.jl"))
 include(joinpath("treetensornetworks", "solvers", "applyexp.jl"))
 include(joinpath("treetensornetworks", "solvers", "update_step.jl"))
 include(joinpath("treetensornetworks", "solvers", "subspace_expansion.jl"))
-include(joinpath("treetensornetworks", "solvers", "subspace_expansion_krylov.jl"))
-include(joinpath("treetensornetworks", "solvers", "subspace_expansion_full.jl"))
+include(joinpath("treetensornetworks", "solvers", "standard_svd.jl"))
+include(joinpath("treetensornetworks", "solvers", "krylov_svd.jl"))
+
+
 include(joinpath("treetensornetworks", "solvers", "alternating_update.jl"))
 include(joinpath("treetensornetworks", "solvers", "tdvp.jl"))
 include(joinpath("treetensornetworks", "solvers", "dmrg.jl"))
