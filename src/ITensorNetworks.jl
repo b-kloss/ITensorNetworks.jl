@@ -116,6 +116,8 @@ include(joinpath("treetensornetworks", "solvers", "update_step.jl"))
 include(joinpath("treetensornetworks", "solvers", "subspace_expansion.jl"))
 include(joinpath("treetensornetworks", "solvers", "standard_svd.jl"))
 include(joinpath("treetensornetworks", "solvers", "krylov_svd.jl"))
+include(joinpath("treetensornetworks", "solvers", "randomized_svd.jl"))
+
 
 
 include(joinpath("treetensornetworks", "solvers", "alternating_update.jl"))
