@@ -154,6 +154,9 @@ function _two_site_expand_core(
   @timeit_debug timer "svd_func" begin
     if svd_func==ITensorNetworks._svd_solve_normal
       U,S,V = svd_func(envMap, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
+    elseif svd_func==ITensorNetworks.rsvd_iterative
+      U,S,V = svd_func(contract(envMap),uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
+      use_absolute_cutoff=true)
     else
       U,S,V = svd_func(eltype(envMap),envMap,envMapDag, uniqueinds(inds(cout),outinds); flux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
     end

@@ -1,17 +1,23 @@
-function build_guess_matrix(eltype::Type{<:Number},ind,n::Int,p::Int;theflux=nothing)
+function get_qn_dict(ind,theflux;auxdir=ITensors.In)
+    @assert hasqns(ind)
+    thedir=dir(ind)
+    translator=Dict{QN,QN}()
+    for s in space(ind)
+        qn = first(s)
+        translator[qn]=(-auxdir) * ((-thedir)*qn + theflux )
+    end
+    return translator
+end
+
+function build_guess_matrix(eltype::Type{<:Number},ind,n::Int,p::Int;theflux=nothing,auxdir=ITensors.In)
     if hasqns(ind)
-        thedir=dir(ind)
-        auxdir=ITensors.In
+        translate_qns=get_qn_dict(ind,theflux;auxdir)
         aux_spaces=Pair{QN,Int64}[]
         for s in space(ind)
             thedim = last(s)
             qn = first(s)
-            # determine size of projection
             en = min(n+p,thedim)
-            #ep = max(0,en-n)
-            #ToDo: make this logic more transparent
-            aux_qn = (-auxdir) * ((-thedir)*qn + theflux )
-            push!(aux_spaces,Pair(aux_qn,en))
+            push!(aux_spaces,Pair(translate_qns[qn],en))
         end
         aux_ind = Index(aux_spaces,dir=auxdir)
         M=randomITensor(eltype,-theflux,dag(ind),aux_ind)
@@ -26,19 +32,18 @@ function build_guess_matrix(eltype::Type{<:Number},ind,n::Int,p::Int;theflux=not
     return M
 end
 
-function build_guess_matrix(eltype::Type{<:Number},ind,ndict::Dict;theflux=nothing)
+function build_guess_matrix(eltype::Type{<:Number},ind,ndict::Dict;theflux=nothing,auxdir=ITensors.In)
     if hasqns(ind)
-        thedir=dir(ind)
-        auxdir=ITensors.In
+        translate_qns=get_qn_dict(ind,theflux;auxdir)
         aux_spaces=Pair{QN,Int64}[]
+        #@show first.(space(ind))
         for s in space(ind)
             thedim = last(s)
             qn = first(s)
             # determine size of projection
-            en = min(ndict[s],thedim)
+            en = min(ndict[translate_qns[qn]],thedim)
             #ToDo: make this logic more transparent
-            aux_qn = (-auxdir) * ((-thedir)*qn + theflux )
-            push!(aux_spaces,Pair(aux_qn,en))
+            push!(aux_spaces,Pair(translate_qns[qn],en))
         end
         aux_ind = Index(aux_spaces,dir=auxdir)
         M=randomITensor(eltype,-theflux,dag(ind),aux_ind)
@@ -53,57 +58,153 @@ function build_guess_matrix(eltype::Type{<:Number},ind,ndict::Dict;theflux=nothi
 
 end
 
-function init_guess_sizes(cind,n::Int,rule)
-    if hasqns(ind)
-        ndict=Dict{Pair{QN, Int64},Int64}
-        for s in space(ind)
+function init_guess_sizes(cind,n::Int,rule;theflux=nothing,auxdir=ITensors.in)
+    if hasqns(cind)
+        translate_qns=get_qn_dict(cind,theflux)
+        ndict=Dict{QN,Int64}()
+        for s in space(cind)
             thedim = last(s)
             qn = first(s)
-            ndict[s]=min(rule(n),thedim)            
+            ndict[translate_qns[qn]]=min(rule(n),thedim)            
         end
     else
-        thedim=dim(ind)
-        ndict=Dict{Int64,Int64}
+        thedim=dim(cind)
+        ndict=Dict{Int64,Int64}()
         ndict[thedim]=min(thedim,rule(n))
     end
     return ndict
 end
 
-function increment_guess_sizes(ndict::Dict{Pair{QN, Int64},Int64},n_inc::Int,rule)
+function increment_guess_sizes(ndict::Dict{QN,Int64},n_inc::Int,rule)
     for key in keys(ndict)
-        thedim=last(key)
-        ndict[key]=min(thedim,ndict[key]+rule(n_inc))
+        #thedim=last(key)
+        ndict[key]=ndict[key]+rule(n_inc)
     end
     return ndict
 end
 
 function increment_guess_sizes(ndict::Dict{Int64,Int64},n_inc::Int,rule)
     for key in keys(ndict)
-        thedim=key
-        ndict[key]=min(thedim,ndict[key]+rule(n_inc))
+        #thedim=key
+        ndict[key]=ndict[key]+rule(n_inc)
     end
     return ndict
 end
 
-function increment_guess_sizes(ndict::Dict,old_fact,new_fact,n_inc;svd_kwargs...)
+function increment_guess_sizes(ndict::Dict{QN,Int64},old_fact,new_fact,n_inc::Int;svd_kwargs...)
     oS=old_fact.S
-    nS=new_fact.s
+    nS=new_fact.S
+
+    #@show keys(ndict)
     for block in eachnzblock(oS)
         i=Int(block[1])
         #assumes same ordering of inds
         oldspace=space(inds(oS)[1])
         newspace=space(inds(nS)[1])
+        #@show oldspace
+        #@show newspace
         #make sure blocks are the same QN when we compare them
-        @assert first(oldspace[i])==first(newspace[i])'
+        @assert first(oldspace[i])==first(newspace[i])
         ovals=diag(oS[block])
         nvals=diag(nS[block])
-        conv=is_converged_block(ovals,nvals;svd_kwargs)
+        conv_bool=is_converged_block(collect(ovals),collect(nvals);svd_kwargs...)
+        if !conv_bool
+            ndict[first(newspace[i])]+=n_inc   ###this is wrong
+        end
     end
+    return ndict
+end
+
+function approx_the_same(o,n;abs_eps=1e-11,rel_eps=1e-4)
+    absdev=abs.(o .- n)
+    reldev=abs.((o .- n) ./ n)
+    abs_conv = absdev .< abs_eps
+    rel_conv = reldev .< rel_eps
+    return all(abs_conv .|| rel_conv)
+end
+
+function is_converged_block(o,n;svd_kwargs...)
+    ##returns the number of converged singular values above cutoff, and minimum among all converged singular values
+    #@show o,n,typeof(o)
+    #@show svd_kwargs
+    maxdim=get(svd_kwargs, :maxdim,Inf)
+    #@show maxdim
+    ##if there is a cutoff arg, the svd will not return singular values below cutoff anyway...
+    if length(o)!=length(n)
+        return false
+    else
+        r=min(maxdim, length(o))
+        #ToDo: Pass kwargs?
+        return approx_the_same(o[1:r],n[1:r])
+    end
+end
+
+function is_converged!(ndict,old_fact,new_fact;n_inc=1,svd_kwargs...)
+    #@show svd_kwargs
+    oS=old_fact.S
+    nS=new_fact.S
+    maxdim=get(svd_kwargs, :maxdim,Inf)
+    os=sort(storage(oS),rev=true)
+    ns=sort(storage(nS),rev=true)
+    if length(os)>=maxdim && length(ns) >= maxdim
+        conv_global=approx_the_same(os[1:maxdim],ns[1:maxdim])
+    else
+        r=min(length(os),length(ns))
+        conv_global=approx_the_same(os[1:r],ns[1:r])
+    end
+
+    conv_bool_total=true
+    
+    soS=space(inds(oS)[1])
+    snS=space(inds(nS)[1])
+    qns=union(first.(soS),first.(snS))
+
+    
+    oblocks=eachnzblock(oS)
+    oblockdict=Int.(getindex.(oblocks,1))
+    oqnindtoblock=Dict(collect(values(oblockdict)) .=> collect(keys(oblockdict)))
+
+    nblocks=eachnzblock(nS)
+    nblockdict=Int.(getindex.(nblocks,1))
+    nqnindtoblock=Dict(collect(values(nblockdict)) .=> collect(keys(nblockdict)))       
+    
+    for qn in qns
+        if qn in first.(snS) && qn in first.(soS)
+            oqnind=findall((first.(soS)) .== [qn,])[]
+            nqnind=findall((first.(snS)) .== (qn,))[]
+            oblock=oqnindtoblock[oqnind]
+            nblock=nqnindtoblock[nqnind]
+            
+            #make sure blocks are the same QN when we compare them
+            #@assert first(soS[oqnind])==first(snS[nqnind])#
+            ovals=diag(oS[oblock])
+            nvals=diag(nS[nblock])
+            #@show typeof(collect(ovals)),collect(nvals)
+            conv_bool=is_converged_block(collect(ovals),collect(nvals);svd_kwargs...)
+    #        @show conv_bool
+        else
+            conv_bool=false
+        end
+        if conv_bool==false
+            ndict[qn]+=n_inc 
+        end
+        conv_bool_total*=conv_bool
+    end
+    if conv_bool_total==true
+        @assert conv_global==true
+    else
+        if conv_global==true
+            println("svals converged globally, but may not be optimal, doing another iteration")
+        end
+    end
+    return conv_bool_total::Bool
 end
 
 function rsvd_iterative(A::ITensor,linds::Vector{<:Index};svd_kwargs...)
     ##preprocess
+    #println("in rsvdit")
     rinds=uniqueinds(A,linds)
+    #@show svd_kwargs
     #ToDo handle empty rinds
     #boilerplate matricization of tensor for matrix decomp
     CL=combiner(linds)
@@ -117,22 +218,41 @@ function rsvd_iterative(A::ITensor,linds::Vector{<:Index};svd_kwargs...)
     ##build ndict for initial run
     n_init=1
     p_rule(n)=2*n
-    ndict=init_guess_sizes(cR,n_init,p_rule)
+    #@show hasqns(cR),hasqns(cL)
+    ndict2=init_guess_sizes(cR,n_init,p_rule;theflux=hasqns(AC) ? flux(AC) : nothing)
+    ndict=init_guess_sizes(cL,n_init,p_rule;theflux=hasqns(AC) ? flux(AC) : nothing)
+    ndict=merge(ndict,ndict2)
+    #@show ndict
+    #@show keys(ndict2)
+    #println("in rsvdit - before first guess")
     M=build_guess_matrix(eltype(AC),cR,ndict;theflux=hasqns(AC) ? flux(AC) : nothing)
-    fact=rsvd_core(AC,M;svd_kwargs)
+    fact,Q=rsvd_core(AC,M;svd_kwargs...)
+
+    #println("in rsvdit - after first solve")
     n_inc=1
     ndict=increment_guess_sizes(ndict,n_inc,p_rule)
+    new_fact=deepcopy(fact)
+    #Q=0.0
     while true
+        #@show "here"
         M=build_guess_matrix(eltype(AC),cR,ndict;theflux=hasqns(AC) ? flux(AC) : nothing)
-        new_fact=rsvd_core(AC,M;svd_kwargs...)
-        if is_converged(fact,new_fact;svd_kwargs...)
+        new_fact,Q=rsvd_core(AC,M;svd_kwargs...)
+        #@show type(new_fact)
+        #ndict=increment_guess_sizes(ndict,n_inc,p_rule)
+        if is_converged!(ndict,fact,new_fact;n_inc,svd_kwargs...)
             break
         else
-            
-        #compare convergence
+            #ndict=increment_guess_sizes(ndict,fact,new_fact,p_rule(n_inc);svd_kwargs...)
+            fact=new_fact
+            #compare convergence
         end
     end
-
+    #@show new_fact
+    #@show minimum(collect(storage(new_fact.S)))
+    #@show length(collect(storage(new_fact.S)))
+    vals=diag(array(new_fact.S))
+    (length(vals) == 1 && vals[1]^2 ≤ get(svd_kwargs,:cutoff,0.0)) && return nothing,nothing,nothing
+    return dag(CL)*Q*new_fact.U, new_fact.S, new_fact.V*dag(CR)
     #ToDo: handle non-QN case separately because there it is advisable to start with n_init closer to target maxdim
     
     
@@ -152,17 +272,18 @@ function rsvd(A::ITensor,linds::Vector{<:Index},n::Int,p::Int;svd_kwargs...)
         AC = permute(AC, cL, cR)
     end
     M=build_guess_matrix(eltype(AC),cR,n,p;theflux=hasqns(AC) ? flux(AC) : nothing)
-    fact=rsvd_core(AC,M;svd_kwargs)
+    fact,Q=rsvd_core(AC,M;svd_kwargs)
     return dag(CL)*Q*fact.U, fact.S, fact.V*dag(CR)
     #return ITensors.TruncSVD(dag(CL)*Q*fact.U,fact.S,fact.V*dag(CR),fact.spec,linds,rinds)  #?
 end
 
-function rsvd_core(AC,M;svd_kwargs)
+function rsvd_core(AC,M;svd_kwargs...)
     Q=AC*M
     Q=ITensors.qr(Q,commoninds(AC,Q))[1]
     QAC=dag(Q)*AC
+    #@show svd_kwargs
     fact=svd(QAC,uniqueind(QAC,AC);svd_kwargs...)
-    return fact
+    return fact,Q
 end
 
 function _svd_solve_randomized_precontract(
