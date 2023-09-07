@@ -1,4 +1,5 @@
 function get_qn_dict(ind,theflux;auxdir=ITensors.In)
+    ###should work right away for multiple QNs, no need to refactor
     @assert hasqns(ind)
     thedir=dir(ind)
     translator=Dict{QN,QN}()
@@ -40,9 +41,7 @@ function build_guess_matrix(eltype::Type{<:Number},ind,ndict::Dict;theflux=nothi
         for s in space(ind)
             thedim = last(s)
             qn = first(s)
-            # determine size of projection
             en = min(ndict[translate_qns[qn]],thedim)
-            #ToDo: make this logic more transparent
             push!(aux_spaces,Pair(translate_qns[qn],en))
         end
         aux_ind = Index(aux_spaces,dir=auxdir)
@@ -59,6 +58,9 @@ function build_guess_matrix(eltype::Type{<:Number},ind,ndict::Dict;theflux=nothi
 end
 
 function init_guess_sizes(cind,n::Int,rule;theflux=nothing,auxdir=ITensors.in)
+    #@show typeof(cind)
+    #@show cind
+    #@show theflux
     if hasqns(cind)
         translate_qns=get_qn_dict(cind,theflux)
         ndict=Dict{QN,Int64}()
@@ -90,7 +92,7 @@ function increment_guess_sizes(ndict::Dict{Int64,Int64},n_inc::Int,rule)
     end
     return ndict
 end
-
+#=
 function increment_guess_sizes(ndict::Dict{QN,Int64},old_fact,new_fact,n_inc::Int;svd_kwargs...)
     oS=old_fact.S
     nS=new_fact.S
@@ -114,8 +116,8 @@ function increment_guess_sizes(ndict::Dict{QN,Int64},old_fact,new_fact,n_inc::In
     end
     return ndict
 end
-
-function approx_the_same(o,n;abs_eps=1e-11,rel_eps=1e-4)
+=#
+function approx_the_same(o,n;abs_eps=1e-8,rel_eps=1e-4)
     absdev=abs.(o .- n)
     reldev=abs.((o .- n) ./ n)
     abs_conv = absdev .< abs_eps
@@ -124,12 +126,7 @@ function approx_the_same(o,n;abs_eps=1e-11,rel_eps=1e-4)
 end
 
 function is_converged_block(o,n;svd_kwargs...)
-    ##returns the number of converged singular values above cutoff, and minimum among all converged singular values
-    #@show o,n,typeof(o)
-    #@show svd_kwargs
     maxdim=get(svd_kwargs, :maxdim,Inf)
-    #@show maxdim
-    ##if there is a cutoff arg, the svd will not return singular values below cutoff anyway...
     if length(o)!=length(n)
         return false
     else
@@ -143,21 +140,33 @@ function is_converged!(ndict,old_fact,new_fact;n_inc=1,svd_kwargs...)
     #@show svd_kwargs
     oS=old_fact.S
     nS=new_fact.S
+    theflux=flux(nS)
+    @assert theflux==flux(oS)
     maxdim=get(svd_kwargs, :maxdim,Inf)
     os=sort(storage(oS),rev=true)
     ns=sort(storage(nS),rev=true)
     if length(os)>=maxdim && length(ns) >= maxdim
         conv_global=approx_the_same(os[1:maxdim],ns[1:maxdim])
+    elseif length(os)!=length(ns)
+        conv_global=false
     else
-        r=min(length(os),length(ns))
+        r=length(ns)
         conv_global=approx_the_same(os[1:r],ns[1:r])
     end
-
+    if !hasqns(oS)
+        if conv_global==false
+            #ndict has only one key 
+            ndict[first(keys(ndict))]*=2
+        end
+        return conv_global
+    end
     conv_bool_total=true
-    
+    ##a lot of this would be more convenient with ITensor internal_inds_space
+    ##ToDo: refactor, but not entirely trivial because functionality is implemented on the level of QNIndex, not a set of QNIndices
+    ##e.g. it is cumbersome to query the collection of QNs associated with a Block{n} of an ITensor with n>1
     soS=space(inds(oS)[1])
     snS=space(inds(nS)[1])
-    qns=union(first.(soS),first.(snS))
+    qns=union(ITensors.qn.(soS),ITensors.qn.(snS))
 
     
     oblocks=eachnzblock(oS)
@@ -169,11 +178,13 @@ function is_converged!(ndict,old_fact,new_fact;n_inc=1,svd_kwargs...)
     nqnindtoblock=Dict(collect(values(nblockdict)) .=> collect(keys(nblockdict)))       
     
     for qn in qns
-        if qn in first.(snS) && qn in first.(soS)
-            oqnind=findall((first.(soS)) .== [qn,])[]
-            nqnind=findall((first.(snS)) .== (qn,))[]
+        if qn in ITensors.qn.(snS) && qn in ITensors.qn.(soS)
+            oqnind=findfirst((first.(soS)) .== [qn,])
+            nqnind=findfirst((first.(snS)) .== (qn,))
             oblock=oqnindtoblock[oqnind]
             nblock=nqnindtoblock[nqnind]
+            #oblock=ITensors.block(first,inds(oS)[1],qn)
+            #nblock=ITensors.block(first,inds(nS)[1],qn)
             
             #make sure blocks are the same QN when we compare them
             #@assert first(soS[oqnind])==first(snS[nqnind])#
@@ -186,7 +197,7 @@ function is_converged!(ndict,old_fact,new_fact;n_inc=1,svd_kwargs...)
             conv_bool=false
         end
         if conv_bool==false
-            ndict[qn]+=n_inc 
+            ndict[qn]*=2 
         end
         conv_bool_total*=conv_bool
     end
@@ -199,6 +210,80 @@ function is_converged!(ndict,old_fact,new_fact;n_inc=1,svd_kwargs...)
     end
     return conv_bool_total::Bool
 end
+
+function rsvd_iterative(T,A::ITensors.ITensorNetworkMaps.ITensorNetworkMap,linds::Vector{<:Index};theflux=nothing,svd_kwargs...)
+    #@show theflux
+    #@show inds(contract(A))
+    #translate from in/out to l/r logic
+    ininds=ITensors.ITensorNetworkMaps.input_inds(A)
+    outinds=ITensors.ITensorNetworkMaps.output_inds(A)
+    #@show inds(contract(A))
+    #@show ininds
+    #@show outinds
+    @assert linds==ininds  ##FIXME: this is specific to the way we wrote the subspace expansion, should be fixed in another iteration
+    rinds=outinds
+    ##for subspace expansion we already have combined indices, but combining twice shouldn't incur overhead
+    CL=combiner(linds...)
+    CR=combiner(rinds...)
+    cL=uniqueind(inds(CL),linds)
+    cR=uniqueind(inds(CR),rinds)
+    #@show inds(CL)
+    #@show inds(A.itensors[1])
+    #@show inds(CR)
+    #@show inds(A.itensors[end])
+    
+    l=CL*A.itensors[1]
+    r=A.itensors[end]*CR
+    #@show inds(l)
+    #@show inds(r)
+    if length(A.itensors)!==2
+        AC=ITensors.ITensorNetworkMaps.ITensorNetworkMap([l,A.itensors[2:length(A.itensors)-1]...,r],commoninds(l,CL),commoninds(r,CR))
+    else
+        AC=ITensors.ITensorNetworkMaps.ITensorNetworkMap([l,r],commoninds(l,CL),commoninds(r,CR))
+    end
+    #@show inds(AC.itensors[1])
+    #@show inds(AC.itensors[2])
+    #@show inds(AC.itensors[3])
+    
+    #no permute necessary
+    n_init=1
+    p_rule(n)=2*n
+    ndict2=init_guess_sizes(cR,n_init,p_rule;theflux=theflux)
+    ndict=init_guess_sizes(cL,n_init,p_rule;theflux=theflux)
+    if hasqns(ininds)
+        ndict=merge(ndict,ndict2)
+    else
+        ndict=ndict2
+    end
+    M=build_guess_matrix(T,cR,ndict;theflux=theflux)
+    fact,Q=rsvd_core(AC,M;svd_kwargs...)
+    n_inc=2
+    ndict=increment_guess_sizes(ndict,n_inc,p_rule)
+    new_fact=deepcopy(fact)
+    #Q=0.0
+    while true
+        #@show "here"
+        M=build_guess_matrix(T,cR,ndict;theflux=theflux)
+        new_fact,Q=rsvd_core(AC,M;svd_kwargs...)
+        #@show length(storage(new_fact.S)),minimum(new_fact.S),maximum(new_fact.S)
+        #ndict=increment_guess_sizes(ndict,n_inc,p_rule)
+        #@show ndict
+        if is_converged!(ndict,fact,new_fact;n_inc,svd_kwargs...)
+            break
+        else
+            #ndict=increment_guess_sizes(ndict,fact,new_fact,p_rule(n_inc);svd_kwargs...)
+            fact=new_fact
+            #compare convergence
+        end
+    end
+    #@show new_fact
+    #@show minimum(collect(storage(new_fact.S)))
+    #@show length(collect(storage(new_fact.S)))
+    vals=diag(array(new_fact.S))
+    (length(vals) == 1 && vals[1]^2 ≤ get(svd_kwargs,:cutoff,0.0)) && return nothing,nothing,nothing
+    return dag(CL)*Q*new_fact.U, new_fact.S, new_fact.V*dag(CR)
+end
+
 
 function rsvd_iterative(A::ITensor,linds::Vector{<:Index};svd_kwargs...)
     ##preprocess
@@ -277,7 +362,7 @@ function rsvd(A::ITensor,linds::Vector{<:Index},n::Int,p::Int;svd_kwargs...)
     #return ITensors.TruncSVD(dag(CL)*Q*fact.U,fact.S,fact.V*dag(CR),fact.spec,linds,rinds)  #?
 end
 
-function rsvd_core(AC,M;svd_kwargs...)
+function rsvd_core(AC::ITensor,M;svd_kwargs...)
     Q=AC*M
     Q=ITensors.qr(Q,commoninds(AC,Q))[1]
     QAC=dag(Q)*AC
@@ -285,6 +370,27 @@ function rsvd_core(AC,M;svd_kwargs...)
     fact=svd(QAC,uniqueind(QAC,AC);svd_kwargs...)
     return fact,Q
 end
+
+function rsvd_core(AC::ITensors.ITensorNetworkMaps.ITensorNetworkMap,M;svd_kwargs...)
+    #assumes that we want to do a contraction of M with map over its maps output_inds, i.e. a right-multiply
+    #thus a transpose is necessary
+    #@show inds(contract(AC))
+    #@show inds.(AC.itensors)
+    Q=transpose(AC)*M
+    #@show inds(Q)
+    #commoninds(contract(AC),Q) => input_inds(AC)
+    Q=ITensors.qr(Q,ITensors.ITensorNetworkMaps.input_inds(AC))[1]
+    #left multiply for map looks like this
+    QAC=AC*dag(Q)
+    #now QAC should be an ITensor
+    #println("done with contraction inside core")
+    @assert typeof(QAC)<:ITensor
+    #@show svd_kwargs
+    #@show inds(QAC)
+    fact=svd(QAC,uniqueind(inds(Q),ITensors.ITensorNetworkMaps.input_inds(AC));svd_kwargs...)
+    return fact,Q
+end
+
 
 function _svd_solve_randomized_precontract(
     envMap, left_ind, n::Int,p::Int; maxdim, cutoff,flux=nothing
