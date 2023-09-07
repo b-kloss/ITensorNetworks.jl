@@ -146,8 +146,11 @@ function _two_site_expand_core(
   cin=combiner(ininds)
   cout=combiner(outinds)
   envs=[cin*envs[1],cout*envs[2]]
+  #@show inds.(envs)
+  #@show inds(phi)
+  #@show inds(contract([last(envs),phi,first(envs)]))
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([last(envs),phi,first(envs)], uniqueinds(inds(cout),outinds), uniqueinds(inds(cin),ininds))
-  
+  #@show eltype(envMap)
   
   envMapDag = adjoint(envMap)
 
@@ -155,7 +158,8 @@ function _two_site_expand_core(
     if svd_func==ITensorNetworks._svd_solve_normal
       U,S,V = svd_func(envMap, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
     elseif svd_func==ITensorNetworks.rsvd_iterative
-      U,S,V = svd_func(contract(envMap),uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
+      #@show theflux
+      U,S,V = svd_func(eltype(first(envMap.itensors)),envMap,uniqueinds(inds(cout),outinds);theflux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
       use_absolute_cutoff=true)
     else
       U,S,V = svd_func(eltype(envMap),envMap,envMapDag, uniqueinds(inds(cout),outinds); flux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
@@ -305,12 +309,21 @@ function _full_expand_core_vertex(
   env2p2= replaceprime(env2p * replaceprime(dag(env2p),0=>2),2=>1)
 
 
-  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(env1)),(env2-env2p2),env1] , uniqueinds(cout,outinds), uniqueinds(dag(cout),ininds))
+  envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(env1)),(env2-env2p2),env1] , prime(dag(uniqueinds(cout,outinds))), uniqueinds(cout,outinds))
+  #envMap=transpose(envMap)
+  #@show typeof(envMap)
   envMapDag=adjoint(envMap)
   # svd-decomposition
   @timeit_debug timer "svd_func" begin
     if svd_func==ITensorNetworks._svd_solve_normal
       U,S,_ = svd_func(envMap, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
+    elseif svd_func==ITensorNetworks.rsvd_iterative
+      #@show theflux
+      envMap=transpose(envMap)
+      U,S,V = svd_func(eltype(first(envMap.itensors)),envMap,ITensors.ITensorNetworkMaps.input_inds(envMap);theflux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
+      use_absolute_cutoff=true)
+      #U,S,V =  svd_func(contract(envMap),uniqueinds(inds(cout),outinds);theflux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
+      #use_absolute_cutoff=true)
     else
       U,S,_= svd_func(eltype(envMap),envMap,envMapDag,uniqueinds(cout,outinds); flux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
     end
@@ -318,7 +331,8 @@ function _full_expand_core_vertex(
   isnothing(U) && return psi,phi,PH
 
   @assert dim(commonind(U, S)) ≤ maxdim
-
+  #@show inds(U)
+  #@show inds(V)
   nullVec = dag(cout)*U
   new_psi1, new_ind1 = ITensors.directsum(
     psi1 => uniqueinds(psi1, nullVec), nullVec => uniqueinds(nullVec, psi1); tags=(tags(commonind(psi1,phi)),)
