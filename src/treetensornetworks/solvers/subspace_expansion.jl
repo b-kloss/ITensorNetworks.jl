@@ -81,7 +81,7 @@ function _two_site_expand_core(
 )
   #enforce expand_dir in the tested direction
   # @assert expand_dir==+1
-
+  #@show cutoff
   (typeof(region)==NamedEdge{Int}) && return psi, phi0, PH
   if typeof(region) == NamedEdge{Int} 
     n1,n2 = (src(region),dst(region))
@@ -114,8 +114,9 @@ function _two_site_expand_core(
   PH = position(PH, psi, verts)
 
   # don't expand if we are already at maxdim
+  #@show old_linkdim >=maxdim
   (old_linkdim >= maxdim) && return psi, phi0, PH
-
+  #@show "expanding", maxdim-old_linkdim
   linkinds = map(psi -> commonind(psi, phi), psis)
 
   # compute nullspace to the left and right 
@@ -217,9 +218,10 @@ end
 function _full_expand_core_vertex(
     PH, psi, phi, region, svd_func; direction, expand_dir=-1, expander_cache=Any[], maxdim, cutoff, atol=1e-8, kwargs...,
 )
+  #@show cutoff
   #enforce expand_dir in the tested direction
   @assert expand_dir==-1
-
+  #println("in full expand")
   ### only on edges
   #(typeof(region)!=NamedEdge{Int}) && return psi, phi, PH
   ### only on verts
@@ -233,7 +235,10 @@ function _full_expand_core_vertex(
   else
     n2 = expand_dir == 1 ? n1 + 1 : n1-1
   end
+
   (n2 < 1 || n2 > length(vertices(psi))) && return psi,phi,PH
+  neutralflux=flux(psi[n2])
+  
   verts = [n1,n2]
   
   if isempty(expander_cache)
@@ -269,8 +274,10 @@ function _full_expand_core_vertex(
   # don't expand if we are already at maxdim
   ## make more transparent that this is not the normal maxdim arg but maxdim_expand
   ## when would this even happen?
+  #@show old_linkdim, maxdim
+  
   old_linkdim >= maxdim && return psi, phi, PH
-
+  #@show "expandin", maxdim, old_linkdim, maxdim-old_linkdim
   # compute nullspace to the left and right 
   linkind_l = commonind(psi1, psi2)
   nullVec = implicit_nullspace(psi1, linkind_l)
@@ -320,16 +327,16 @@ function _full_expand_core_vertex(
     elseif svd_func==ITensorNetworks.rsvd_iterative
       #@show theflux
       envMap=transpose(envMap)
-      U,S,V = svd_func(eltype(first(envMap.itensors)),envMap,ITensors.ITensorNetworkMaps.input_inds(envMap);theflux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
+      U,S,_ = svd_func(eltype(first(envMap.itensors)),envMap,ITensors.ITensorNetworkMaps.input_inds(envMap);theflux=neutralflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
       use_absolute_cutoff=true)
       #U,S,V =  svd_func(contract(envMap),uniqueinds(inds(cout),outinds);theflux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
       #use_absolute_cutoff=true)
     else
-      U,S,_= svd_func(eltype(envMap),envMap,envMapDag,uniqueinds(cout,outinds); flux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
+      U,S,_= svd_func(eltype(envMap),envMap,envMapDag,uniqueinds(cout,outinds); flux=neutralflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
     end
   end
   isnothing(U) && return psi,phi,PH
-
+  @show dim(commonind(U, S)) 
   @assert dim(commonind(U, S)) ≤ maxdim
   #@show inds(U)
   #@show inds(V)
