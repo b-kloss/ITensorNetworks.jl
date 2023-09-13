@@ -3,27 +3,36 @@ function exponentiate_solver(; kwargs...)
     H,
     init;
     ishermitian=true,
-    issymmetric=true,
+    issymmetric=false,
     region,
-    solver_krylovdim=30,
+    solver_krylovdim=10,
     solver_maxiter=100,
     solver_outputlevel=0,
     solver_tol=1E-12,
+    solver_orth=KrylovKit.KrylovDefaults.orth,#ClassicalGramSchmidt(),
+    solver_eager=true,
     substep,    
     time_step,
     kws...,
   )
-    solver_kwargs = (;
-      ishermitian,
-      issymmetric,
-      tol=solver_tol,
-      krylovdim=solver_krylovdim,
-      maxiter=solver_maxiter,
-      verbosity=solver_outputlevel,
-      eager=true,
-    )
-
-    psi, info = KrylovKit.exponentiate(H, time_step, init; solver_kwargs...)
+    alg = KrylovKit.Lanczos(
+      orth = solver_orth,
+      krylovdim = solver_krylovdim,
+      maxiter = solver_maxiter,
+      tol = solver_tol,
+      verbosity = solver_outputlevel,
+      eager=solver_eager)
+    #=
+    #solver_kwargs = (;
+    #  tol=solver_tol,
+    #  krylovdim=solver_krylovdim,
+    #  maxiter=solver_maxiter,
+    #  verbosity=solver_outputlevel,
+    #  eager=true,
+    #  orth=KrylovKit.ClassicalGramSchmidt,
+    #)
+    =#
+    psi, info = KrylovKit.exponentiate(H, time_step, init, alg)
     return psi, info
   end
   return solver
