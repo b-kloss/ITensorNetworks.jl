@@ -166,29 +166,40 @@ function is_converged_block(o,n;svd_kwargs...)
     end
 end
 
-function is_converged!(ndict,old_fact,new_fact;n_inc=1,svd_kwargs...)
+
+function is_converged!(ndict,old_fact,new_fact;n_inc=1,has_qns=true,svd_kwargs...)
     oS=old_fact.S
     nS=new_fact.S
     theflux=flux(nS)
     oldflux=flux(oS)
-    
-    if oldflux==nothing || theflux==nothing
-        if norm(oS)==0.0 && norm(nS)==0.0
-            return true
+    if has_qns
+        if oldflux==nothing || theflux==nothing
+            if norm(oS)==0.0 && norm(nS)==0.0
+                return true
+            else
+                return false
+            end
         else
-    	    return false
+            try
+                @assert theflux==flux(oS)
+            catch e
+                @show e
+                @show theflux
+                @show oldflux
+                error("Somehow the fluxes are not matching here! Exiting")
+            end
         end
     else
-    	try
-    		@assert theflux==flux(oS)
-	    catch e
-	    	@show e
-		    @show theflux
-		    @show oldflux
-		    error("Somehow the fluxes are not matching here! Exiting")
-    	end
+        ###not entirely sure if this is legal for empty factorization
+        if norm(oS)==0.0
+            if norm(nS)==0.0
+                return true
+            else
+                return false
+            end
+        end
     end
-    
+
     maxdim=get(svd_kwargs, :maxdim,Inf)
     os=sort(storage(oS),rev=true)
     ns=sort(storage(nS),rev=true)
@@ -294,7 +305,7 @@ function rsvd_iterative(T,A::ITensors.ITensorNetworkMaps.ITensorNetworkMap,linds
     while true
         M=build_guess_matrix(T,cR,ndict;theflux=theflux)
         new_fact,Q=rsvd_core(AC,M;svd_kwargs...)
-        if is_converged!(ndict,fact,new_fact;n_inc,svd_kwargs...)
+        if is_converged!(ndict,fact,new_fact;n_inc,has_qns=hasqns(ininds),svd_kwargs...)
             break
         else
             fact=new_fact
@@ -329,7 +340,7 @@ function rsvd_iterative(A::ITensor,linds::Vector{<:Index};svd_kwargs...)
     while true
         M=build_guess_matrix(eltype(AC),cR,ndict;theflux=hasqns(AC) ? flux(AC) : nothing)
         new_fact,Q=rsvd_core(AC,M;svd_kwargs...)
-        if is_converged!(ndict,fact,new_fact;n_inc,svd_kwargs...)
+        if is_converged!(ndict,fact,new_fact;n_inc,has_qns=hasqns(AC),svd_kwargs...)
             break
         else
             fact=new_fact
