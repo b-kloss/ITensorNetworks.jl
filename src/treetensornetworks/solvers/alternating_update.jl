@@ -41,9 +41,14 @@ function alternating_update(
   name_obs = get(kwargs, :name_obs, "")
   step_observer = get(kwargs, :step_observer!, nothing)
   step_expander = get(kwargs, :step_expander, nothing)
-  maxdim_expand = get(kwargs, :maxdim_expand, maxdim)
-  ### catch error
-
+  maxdim_expand = get(kwargs, :maxdim_expand, Int.(ceil.(2^(1/3)*maxdim))) 
+  cutoff_expand = get(kwargs, :cutoff_expand, nothing)
+  step_observer_kwargs =  get(kwargs, :step_observer_kwargs, NamedTuple())
+  #@show step_observer_kwargs
+  #@show kwargs
+  #@show cutoff_expand
+  # Default for maxdim_expand allows maxdim expand to have overhead of 100% (leading order compute) over calculation at maxdim
+  
   psi = copy(psi0)
 
   info = nothing
@@ -66,9 +71,9 @@ function alternating_update(
           outputlevel,
           sweep=sw,
           maxdim=maxdim[sw],
-          maxdim_expand=maxdim[sw],
+          maxdim_expand=maxdim_expand[sw],
           mindim=mindim[sw],
-          cutoff=cutoff[sw],
+          cutoff=cutoff_expand,
           noise=noise[sw],
           kwargs...,
         )
@@ -93,7 +98,7 @@ function alternating_update(
       end
     end
 
-    update!(step_observer; psi, PH, psi0=get(kwargs,:psi_gs, nothing), sweep=sw, sw_time, outputlevel)
+    update!(step_observer; psi, PH, sweep=sw, sw_time, outputlevel, step_observer_kwargs...)
     if (!isempty(name_obs) && mod(sw,5) == 0)
       kwargs[:save_func](name_obs, step_observer)
     end

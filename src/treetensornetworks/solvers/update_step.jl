@@ -41,14 +41,19 @@ function step_expand(
     direction = get(step_kwargs, :substep, 1)
     svd_func = get(kwargs, :svd_func, _svd_solve_normal)
 
-    direction == 1 && continue
     psi = orthogonalize(psi, current_ortho(region))
-    psi, phi = extract_local_tensor(psi, region, maxdim)
-
+    
+    
     nsites = (region isa AbstractEdge) ? 0 : length(region)
-
+    #@show region
+    #@show current_ortho(region)
+    #@show nsites
     PH = set_nsite(PH, nsites)
-    PH = position(PH, psi, region)
+    if nsites>0
+      PH = position(PH, psi, region)
+    end
+    direction == 1 && continue
+    psi, phi = extract_local_tensor(psi, region, maxdim)
 
     psi,phi,PH = step_expander(
       PH,
@@ -158,6 +163,7 @@ function update_step(
       psi,
       region,
       sweep=sw,
+      PH,
       spec,
       outputlevel,
       info,
@@ -186,6 +192,10 @@ function extract_local_tensor(psi::AbstractTTN, pos::Vector, m::Int)
   extract_local_tensor(psi, pos)
 end
 
+function extract_local_tensor(psi::AbstractTTN, pos::Vector, c::Float64, m::Int)
+  extract_local_tensor(psi, pos)
+end
+
 function extract_local_tensor(psi::AbstractTTN, e::NamedEdge)
   left_inds = uniqueinds(psi, e)
   U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e))
@@ -196,6 +206,14 @@ end
 function extract_local_tensor(psi::AbstractTTN, e::NamedEdge, m::Int)
   left_inds = uniqueinds(psi, e)
   U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e), maxdim=m)
+  psi[src(e)] = U
+
+  return psi, S * V
+end
+
+function extract_local_tensor(psi::AbstractTTN, e::NamedEdge, cutoff::Float64,m::Int)
+  left_inds = uniqueinds(psi, e)
+  U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e), cutoff=cutoff, maxdim=m)
   psi[src(e)] = U
 
   return psi, S * V
@@ -252,10 +270,12 @@ function local_update(
   solver, PH, psi, region; outputlevel, cutoff, maxdim, maxdim_expand=maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
 )
   direction = get(step_kwargs, :substep, 1)
+  dt = get(step_kwargs, :time_step,1)
   expander = get(kwargs, :expander, nothing)
-
+  cutoff_expand = get(kwargs, :cutoff_expand,cutoff/abs(dt)^2)
+  #@show cutoff_expand
   psi = orthogonalize(psi, current_ortho(region))
-  psi, phi = extract_local_tensor(psi, region, maxdim)
+  psi, phi = extract_local_tensor(psi, region,  cutoff, maxdim)
 
   nsites = (region isa AbstractEdge) ? 0 : length(region)
   PH = set_nsite(PH, nsites)
@@ -272,7 +292,7 @@ function local_update(
         svd_func;
         direction,
         maxdim = maxdim_expand,
-        cutoff,
+        cutoff = cutoff_expand,
         kwargs...,
       )
     end
@@ -286,17 +306,18 @@ function local_update(
 
   info = []
   ### solver behaves weirdly sometimes, stating that PH is not hermitian; this fixes it ###
-  @timeit_debug timer "local solve" begin
-    while true
-      try 
-        phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
-        break
-      catch e
-        @show e
+  #if false
+    @timeit_debug timer "local solve" begin
+      while true
+        try 
+          phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
+          break
+        catch e
+          @show e
+        end
       end
     end
-  end
-
+  #end
   normalize && (phi /= norm(phi))
 
   drho = nothing
