@@ -167,12 +167,15 @@ function _two_site_expand_core(
     end
   end
   isnothing(U) && return psi, phi0, PH
+  ###FIXME: somehow the svd funcs sometimes return empty ITensors instead of nothing, that should be caught in the SVD routines instead...
+  all(isempty.([U,S,V])) && return psi, phi0, PH
   
   U *= dag(cout)
   V *= dag(cin)
   @timeit_debug timer "direct sum" begin
     new_psis = map(zip(psis, [U,V])) do (psi,exp_basis)
       #@show tags(commonind(psi,phi))
+      
       return ITensors.directsum(
         psi => commonind(psi, phi), exp_basis => uniqueind(exp_basis, psi); tags=tags(commonind(psi,phi)),
       )
