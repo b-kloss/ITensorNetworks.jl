@@ -36,6 +36,7 @@ function alternating_update(
   write_when_maxdim_exceeds::Union{Int,Nothing}=nothing,
   kwargs...,
 )
+  ###FIXME: how to process other kwargs like maxdim_expand, cutoff_expand properly?
   maxdim, mindim, cutoff, noise, kwargs = process_sweeps(nsweeps; kwargs...)
 
   name_obs = get(kwargs, :name_obs, "")
@@ -44,6 +45,9 @@ function alternating_update(
   maxdim_expand = get(kwargs, :maxdim_expand, Int.(ceil.(2^(1/3)*maxdim))) 
   cutoff_expand = get(kwargs, :cutoff_expand, nothing)
   step_observer_kwargs =  get(kwargs, :step_observer_kwargs, NamedTuple())
+  maxdim_expand=_extend_sweeps_param(maxdim_expand, nsweeps)
+  #cutoff_expand=_extend_sweeps_param(cutoff_expand, nsweeps)
+
   #@show step_observer_kwargs
   #@show kwargs
   #@show cutoff_expand
@@ -89,7 +93,7 @@ function alternating_update(
           outputlevel,
           sweep=sw,
           maxdim=maxdim[sw],
-          maxdim_expand=maxdim[sw],
+          maxdim_expand=maxdim_expand[sw],
           mindim=mindim[sw],
           cutoff=cutoff[sw],
           noise=noise[sw],

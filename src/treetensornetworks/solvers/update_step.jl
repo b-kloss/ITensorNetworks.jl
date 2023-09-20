@@ -267,7 +267,7 @@ current_ortho(::Type{NamedEdge{V}}, st) where {V} = src(st)
 current_ortho(st) = current_ortho(typeof(st), st)
 
 function local_update(
-  solver, PH, psi, region; outputlevel, cutoff, maxdim, maxdim_expand=maxdim, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
+  solver, PH, psi, region; outputlevel, cutoff, maxdim, maxdim_expand, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
 )
   direction = get(step_kwargs, :substep, 1)
   dt = get(step_kwargs, :time_step,1)
