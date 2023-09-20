@@ -340,7 +340,7 @@ function _full_expand_core_vertex(
   end
   isnothing(U) && return psi,phi,PH
   ###FIXME: somehow the svd funcs sometimes return empty ITensors instead of nothing, that should be caught in the SVD routines instead...
-  all(isempty.([U,S])) && return psi, phi0, PH
+  all(isempty.([U,S])) && return psi, phi, PH
   #@show dim(commonind(U, S)) 
   @assert dim(commonind(U, S)) ≤ maxdim
   #@show inds(U)
