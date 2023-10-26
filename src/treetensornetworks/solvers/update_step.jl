@@ -28,6 +28,7 @@ function step_expand(
   sweep_regions=update_sweep(nsite, psi),
   kwargs...,
 )
+  #@show cutoff
   # (Needed to handle user-provided sweep_regions)
   sweep_regions = append_missing_namedtuple.(to_tuple.(sweep_regions))
 
@@ -102,7 +103,6 @@ function update_step(
   info = nothing
   PH = copy(PH)
   psi = copy(psi)
-
   observer = get(kwargs, :observer!, nothing)
 
   # Append empty namedtuple to each element if not already present
@@ -132,6 +132,7 @@ function update_step(
       step_kwargs,
       kwargs...,
     )
+    
     maxtruncerr = isnothing(spec) ? maxtruncerr : max(maxtruncerr, spec.truncerr)
 
     if outputlevel >= 2
@@ -272,7 +273,7 @@ function local_update(
   direction = get(step_kwargs, :substep, 1)
   dt = get(step_kwargs, :time_step,1)
   expander = get(kwargs, :expander, nothing)
-  cutoff_expand = get(kwargs, :cutoff_expand,cutoff/abs(dt)^2)
+  cutoff_expand = get(kwargs, :cutoff_expand,cutoff/abs(dt))
   #@show cutoff_expand
   psi = orthogonalize(psi, current_ortho(region))
   psi, phi = extract_local_tensor(psi, region,  cutoff, maxdim)
@@ -283,6 +284,7 @@ function local_update(
 
   if !isnothing(expander)
     svd_func = get(kwargs, :svd_func, _svd_solve_normal)
+    #@show cutoff,cutoff_expand
     @timeit_debug timer "local expansion" begin
       psi,phi,PH = expander(
         PH,
@@ -325,7 +327,7 @@ function local_update(
 
   (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,[src(region),dst(region)]))
   psi, spec = insert_local_tensor(
-    psi, phi, region, maxdim; eigen_perturbation=drho, ortho, normalize, kwargs...
+    psi, phi, region, maxdim; eigen_perturbation=drho,cutoff=cutoff, ortho, normalize, kwargs...
   )
   (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,region))
 
