@@ -3,7 +3,7 @@ using Revise
 using NamedGraphs
 using ITensors
 using ITensorNetworks
-using ITensorUnicodePlots
+#using ITensorUnicodePlots
 using Observers
 using ITensors.HDF5
 using Random
@@ -55,25 +55,25 @@ function heisenberglin(N; J=1.)
 end
 
 let
-  # Random.seed!(1234)
+  Random.seed!(1234)
   tmax = 2.
-  dt = 0.01
+  dt = 0.025
   N = 16
   J = -1.
   g = -1.
   tau = 0.1
-  D = 40
+  D = 12
 
   # g = named_binary_tree(3)
   # g = named_grid((12,1))
 
   # with QNs
-  # s = siteinds("S=1", N; conserve_qns=true)
-  # # ψ = random_mps(s; states=(x-> isodd(x) ? "Up" : "Dn"), internal_inds_space=1)
+   s = siteinds("S=1/2", N; conserve_qns=true)
+   ψ = random_mps(s; states=(x-> isodd(x) ? "Up" : "Dn"), internal_inds_space=1)
   # ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
-  # model = heisenberglin(N)
-  # H = mpo(model, s)
-
+   model = heisenberglin(N)
+   H = mpo(model, s)
+  @show s
   # without Qns
   #g = chain_lattice_graph(N)
   #s = siteinds("S=1/2", g)
@@ -83,11 +83,11 @@ let
   #H = TTN(model, s)
 
   # rung-decoupled Heisenberg without Qns
-   g = chain_lattice_graph(N)
-   s = siteinds("S=1", N)
-   ψ = random_mps(s; states= x->rand(["Up","Dn"]), internal_inds_space=1)
-   model = rung_decoupl_heisenberg(N)
-   H = mpo(model, s)
+  # g = chain_lattice_graph(N)
+  # s = siteinds("S=1", N)
+  # ψ = random_mps(s; states= x->rand(["Up","Dn"]), internal_inds_space=4)
+  # model = rung_decoupl_heisenberg(N)
+  # H = mpo(model, s)
   #
   model_name = "ising"
 
@@ -113,9 +113,9 @@ let
   # ϕ3 = dmrg_x(H, ψ; dmrg_x_kwargs..., expand = false)
 
   ################### TDVP #################
-
-  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=1e-14, outputlevel=1, cutoff_compress=0)
-
+  tdvp_cutoff=1e-14
+  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=tdvp_cutoff,cutoff_expand=(tdvp_cutoff/dt), outputlevel=1)
+  @show tdvp_kwargs
   println("================================================================")
 
   # ϕ1 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
@@ -168,13 +168,17 @@ let
 
   expander_cache=Any[]
   ϕ5 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
-            expander_backend="full", 
-            svd_backend="svd",
+            expander=ITensorNetworks._two_site_expand_core, 
+            #step_expander=ITensorNetworks._full_expand_core_vertex, 
+            
+            #maxdim_expand=60,
+            svd_func=ITensorNetworks._svd_solve_normal,
             nsite=1,
             expander_cache=expander_cache,
             (observer!)=obs5,
        )
-  savedata(name_obs5, obs5)
+ # @show obs5
+  #savedata(name_obs5, obs5)
 
 end
 nothing
