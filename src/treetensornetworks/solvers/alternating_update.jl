@@ -38,21 +38,20 @@ function alternating_update(
 )
   ###FIXME: how to process other kwargs like maxdim_expand, cutoff_expand properly?
   maxdim, mindim, cutoff, noise, kwargs = process_sweeps(nsweeps; kwargs...)
-
   name_obs = get(kwargs, :name_obs, "")
   step_observer = get(kwargs, :step_observer!, nothing)
   step_expander = get(kwargs, :step_expander, nothing)
+  # Default for maxdim_expand allows maxdim expand to have overhead of 100% (leading order compute) over calculation at maxdim
   maxdim_expand = get(kwargs, :maxdim_expand, Int.(ceil.(2^(1/3)*maxdim))) 
   cutoff_expand = get(kwargs, :cutoff_expand, nothing)
+  # ToDo : expose timestep also to sweep_expand
+  # ToDo : Design --- make exposure of different sets of kwargs less cumbersome at different layers of the algorithm
+  if !isnothing(step_expander) && isnothing(cutoff_expand)
+  error("When using step_expander please pass cutoff_expand.")
+  end
+  
   step_observer_kwargs =  get(kwargs, :step_observer_kwargs, NamedTuple())
   maxdim_expand=_extend_sweeps_param(maxdim_expand, nsweeps)
-  #cutoff_expand=_extend_sweeps_param(cutoff_expand, nsweeps)
-
-  #@show step_observer_kwargs
-  #@show kwargs
-  #@show cutoff_expand
-  # Default for maxdim_expand allows maxdim expand to have overhead of 100% (leading order compute) over calculation at maxdim
-  
   psi = copy(psi0)
 
   info = nothing
@@ -65,25 +64,25 @@ function alternating_update(
       end
       PH = disk(PH)
     end
-
-    if !isnothing(step_expander)
-      @timeit_debug timer "sweep expansion" begin
-        psi, PH = step_expand(
-          step_expander,
-          PH,
-          psi;
-          outputlevel,
-          sweep=sw,
-          maxdim=maxdim[sw],
-          maxdim_expand=maxdim_expand[sw],
-          mindim=mindim[sw],
-          cutoff=cutoff_expand,
-          noise=noise[sw],
-          kwargs...,
-        )
+    swexpand_time = @elapsed begin
+      if !isnothing(step_expander)
+        @timeit_debug timer "sweep expansion" begin
+          psi, PH = step_expand(
+            step_expander,
+            PH,
+            psi;
+            outputlevel,
+            sweep=sw,
+            maxdim=maxdim[sw],
+            maxdim_expand=maxdim_expand[sw],
+            mindim=mindim[sw],
+            cutoff=cutoff_expand,
+            noise=noise[sw],
+            kwargs...,
+          )
+        end
       end
     end
-
     sw_time = @elapsed begin
       @timeit_debug timer "update_step" begin
         psi, PH, info = update_step(
@@ -102,7 +101,7 @@ function alternating_update(
       end
     end
 
-    update!(step_observer; psi, PH, sweep=sw, sw_time, outputlevel, step_observer_kwargs...)
+    update!(step_observer; psi, PH, sweep=sw, sw_time, swexpand_time,  outputlevel, step_observer_kwargs...)
     if (!isempty(name_obs) && mod(sw,5) == 0)
       kwargs[:save_func](name_obs, step_observer)
     end
@@ -112,6 +111,9 @@ function alternating_update(
       print(" maxlinkdim=", maxlinkdim(psi))
       @printf(" maxerr=%.2E", info.maxtruncerr)
       print(" time=", round(sw_time; digits=3))
+      if !isnothing(step_expander)
+        print(" sw. exp. time=", round(swexpand_time; digits=3))
+      end
       println()
       flush(stdout)
     end
