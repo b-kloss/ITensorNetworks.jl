@@ -81,7 +81,6 @@ function _two_site_expand_core(
 )
   #enforce expand_dir in the tested direction
   # @assert expand_dir==+1
-  #@show cutoff
   (typeof(region)==NamedEdge{Int}) && return psi, phi0, PH
   if typeof(region) == NamedEdge{Int} 
     n1,n2 = (src(region),dst(region))
@@ -114,7 +113,6 @@ function _two_site_expand_core(
   PH = position(PH, psi, verts)
 
   # don't expand if we are already at maxdim
-  #@show old_linkdim >=maxdim
   (old_linkdim >= maxdim) && return psi, phi0, PH
   #@show "expanding", maxdim-old_linkdim
   linkinds = map(psi -> commonind(psi, phi), psis)
@@ -127,10 +125,6 @@ function _two_site_expand_core(
     end
   end
   
-  ##ToDo: Remove since not applicable anymore.
-  # if nullspace is empty (happen's for product states with QNs)
-  #sum(norm.(nullVecs) .== 0) > 0 && return psi, phi0, PH
-
   ## build environments
   g = underlying_graph(PH)
   @timeit_debug timer "build environments" begin
@@ -147,11 +141,7 @@ function _two_site_expand_core(
   cin=combiner(ininds)
   cout=combiner(outinds)
   envs=[cin*envs[1],cout*envs[2]]
-  #@show inds.(envs)
-  #@show inds(phi)
-  #@show inds(contract([last(envs),phi,first(envs)]))
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([last(envs),phi,first(envs)], uniqueinds(inds(cout),outinds), uniqueinds(inds(cin),ininds))
-  #@show eltype(envMap)
   
   envMapDag = adjoint(envMap)
 
@@ -159,7 +149,6 @@ function _two_site_expand_core(
     if svd_func==ITensorNetworks._svd_solve_normal
       U,S,V = svd_func(envMap, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
     elseif svd_func==ITensorNetworks.rsvd_iterative
-      #@show theflux
       U,S,V = svd_func(eltype(first(envMap.itensors)),envMap,uniqueinds(inds(cout),outinds);theflux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
       use_absolute_cutoff=true)
     else
@@ -174,7 +163,6 @@ function _two_site_expand_core(
   V *= dag(cin)
   @timeit_debug timer "direct sum" begin
     new_psis = map(zip(psis, [U,V])) do (psi,exp_basis)
-      #@show tags(commonind(psi,phi))
       
       return ITensors.directsum(
         psi => commonind(psi, phi), exp_basis => uniqueind(exp_basis, psi); tags=tags(commonind(psi,phi)),
@@ -206,7 +194,6 @@ function _two_site_expand_core(
   end
 
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
-  #@show dims(new_phi), dims(phi)
   ##ToDo:maybe trigger with debug flag
   # @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) < 50*eps(Float64)
   
@@ -320,8 +307,6 @@ function _full_expand_core_vertex(
 
 
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(env1)),(env2-env2p2),env1] , prime(dag(uniqueinds(cout,outinds))), uniqueinds(cout,outinds))
-  #envMap=transpose(envMap)
-  #@show typeof(envMap)
   envMapDag=adjoint(envMap)
   # svd-decomposition
   @timeit_debug timer "svd_func" begin
@@ -341,10 +326,7 @@ function _full_expand_core_vertex(
   isnothing(U) && return psi,phi,PH
   ###FIXME: somehow the svd funcs sometimes return empty ITensors instead of nothing, that should be caught in the SVD routines instead...
   all(isempty.([U,S])) && return psi, phi, PH
-  #@show dim(commonind(U, S)) 
-  @assert dim(commonind(U, S)) ≤ maxdim
-  #@show inds(U)
-  #@show inds(V)
+  @assert dim(commonind(U, S)) ≤ maxdim-old_linkdim
   nullVec = dag(cout)*U
   new_psi1, new_ind1 = ITensors.directsum(
     psi1 => uniqueinds(psi1, nullVec), nullVec => uniqueinds(nullVec, psi1); tags=(tags(commonind(psi1,phi)),)
