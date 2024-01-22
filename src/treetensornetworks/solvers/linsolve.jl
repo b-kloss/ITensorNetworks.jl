@@ -23,34 +23,26 @@ Keyword arguments:
 Overload of `KrylovKit.linsolve`.
 """
 function linsolve(
-  A::AbstractTTN, b::AbstractTTN, x₀::AbstractTTN, a₀::Number=0, a₁::Number=1; kwargs...
+  A::AbstractTTN,
+  b::AbstractTTN,
+  x₀::AbstractTTN,
+  a₀::Number=0,
+  a₁::Number=1;
+  updater=linsolve_updater,
+  nsweeps,  #it makes sense to require this to be defined
+  nsites=2,
+  (sweep_observer!)=observer(),
+  root_vertex=default_root_vertex(init),
+  updater_kwargs=(;),
+  kwargs...,
 )
-  function linsolve_solver(
-    P,
-    x₀;
-    ishermitian=false,
-    solver_tol=1E-14,
-    solver_krylovdim=30,
-    solver_maxiter=100,
-    solver_verbosity=0,
-    kwargs...,
-  )
-    solver_kwargs = (;
-      ishermitian=ishermitian,
-      tol=solver_tol,
-      krylovdim=solver_krylovdim,
-      maxiter=solver_maxiter,
-      verbosity=solver_verbosity,
-    )
-    b = dag(only(proj_mps(P)))
-    x, info = KrylovKit.linsolve(P, b, x₀, a₀, a₁; solver_kwargs...)
-    return x, nothing
-  end
-
+  updater_kwargs = (; a₀, a₁, updater_kwargs...)
   error("`linsolve` for TTN not yet implemented.")
 
+  sweep_plan = default_sweep_regions(nsites, x0)
   # TODO: Define `itensornetwork_cache`
   # TODO: Define `linsolve_cache`
+
   P = linsolve_cache(itensornetwork_cache(x₀', A, x₀), itensornetwork_cache(x₀', b))
-  return alternating_update(linsolve_solver, P, x₀; kwargs...)
+  return alternating_update(linsolve_updater, P, x₀; sweep_plan, updater_kwargs, kwargs...)
 end

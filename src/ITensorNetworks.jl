@@ -18,8 +18,10 @@ using ITensors.ITensorVisualizationCore
 using ITensors.LazyApply
 using IterTools
 using KrylovKit: KrylovKit
+using LinearAlgebra
 using NamedGraphs
 using Observers
+using Observers.DataFrames: select!
 using Printf
 using Requires
 using SimpleTraits
@@ -35,6 +37,7 @@ using ITensors:
   @Algorithm_str,
   @debug_check,
   @timeit_debug,
+  δ,
   AbstractMPS,
   Algorithm,
   OneITensor,
@@ -51,8 +54,6 @@ using NamedGraphs:
   vertex_to_parent_vertex,
   parent_vertices_to_vertices,
   not_implemented
-
-using ITensors.NDTensors: timer
 
 include("imports.jl")
 
@@ -95,7 +96,9 @@ include("utility.jl")
 include("specialitensornetworks.jl")
 include("renameitensornetwork.jl")
 include("boundarymps.jl")
-include("beliefpropagation.jl")
+include(joinpath("beliefpropagation", "beliefpropagation.jl"))
+include(joinpath("beliefpropagation", "beliefpropagation_schedule.jl"))
+include(joinpath("beliefpropagation", "sqrt_beliefpropagation.jl"))
 include("contraction_tree_to_graph.jl")
 include("gauging.jl")
 include("utils.jl")
@@ -103,6 +106,11 @@ include("tensornetworkoperators.jl")
 include(joinpath("ITensorsExt", "itensorutils.jl"))
 include(joinpath("Graphs", "abstractgraph.jl"))
 include(joinpath("Graphs", "abstractdatagraph.jl"))
+include(joinpath("solvers", "eigsolve.jl"))
+include(joinpath("solvers", "exponentiate.jl"))
+include(joinpath("solvers", "dmrg_x.jl"))
+include(joinpath("solvers", "contract.jl"))
+include(joinpath("solvers", "linsolve.jl"))
 include(joinpath("treetensornetworks", "abstracttreetensornetwork.jl"))
 include(joinpath("treetensornetworks", "ttn.jl"))
 include(joinpath("treetensornetworks", "opsum_to_ttn.jl"))
@@ -111,15 +119,7 @@ include(joinpath("treetensornetworks", "projttns", "projttn.jl"))
 include(joinpath("treetensornetworks", "projttns", "projttnsum.jl"))
 include(joinpath("treetensornetworks", "projttns", "projttn_apply.jl"))
 include(joinpath("treetensornetworks", "solvers", "solver_utils.jl"))
-include(joinpath("treetensornetworks", "solvers", "applyexp.jl"))
 include(joinpath("treetensornetworks", "solvers", "update_step.jl"))
-include(joinpath("treetensornetworks", "solvers", "subspace_expansion.jl"))
-include(joinpath("treetensornetworks", "solvers", "standard_svd.jl"))
-include(joinpath("treetensornetworks", "solvers", "krylov_svd.jl"))
-include(joinpath("treetensornetworks", "solvers", "randomized_svd.jl"))
-
-
-
 include(joinpath("treetensornetworks", "solvers", "alternating_update.jl"))
 include(joinpath("treetensornetworks", "solvers", "tdvp.jl"))
 include(joinpath("treetensornetworks", "solvers", "dmrg.jl"))

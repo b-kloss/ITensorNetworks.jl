@@ -1,11 +1,12 @@
-function update_sweep(nsite, graph::AbstractGraph; kwargs...)
+
+function default_sweep_regions(nsites, graph::AbstractGraph; kwargs...)  ###move this to a different file, algorithmic level idea
   return vcat(
     [
       half_sweep(
         direction(half),
         graph,
         make_region;
-        nsite,
+        nsites,
         region_args=(; half_sweep=half),
         kwargs...,
       ) for half in 1:2
@@ -13,169 +14,88 @@ function update_sweep(nsite, graph::AbstractGraph; kwargs...)
   )
 end
 
-function step_expand(
-  step_expander,
-  PH,
-  psi::AbstractTTN;
-  cutoff::AbstractFloat=1E-16,
-  maxdim::Int=typemax(Int),
-  maxdim_expand::Int,
-  mindim::Int=1,
-  normalize::Bool=false,
-  nsite::Int=2,
+function region_update_printer(;
+  cutoff,
+  maxdim,
+  mindim,
   outputlevel::Int=0,
-  sw::Int=1,
-  sweep_regions=update_sweep(nsite, psi),
+  state,
+  sweep_plan,
+  spec,
+  which_region_update,
+  which_sweep,
   kwargs...,
 )
-  #@show cutoff
-  # (Needed to handle user-provided sweep_regions)
-  sweep_regions = append_missing_namedtuple.(to_tuple.(sweep_regions))
-
-  if nv(psi) == 1
-    error(
-      "`alternating_update` currently does not support system sizes of 1. You can diagonalize the MPO tensor directly with tools like `LinearAlgebra.eigen`, `KrylovKit.exponentiate`, etc.",
-    )
-  end
-
-  for (n, (region, step_kwargs)) in enumerate(sweep_regions)
-    direction = get(step_kwargs, :substep, 1)
-    svd_func = get(kwargs, :svd_func, _svd_solve_normal)
-
-    psi = orthogonalize(psi, current_ortho(region))
-    
-    
-    nsites = (region isa AbstractEdge) ? 0 : length(region)
-    #@show region
-    #@show current_ortho(region)
-    #@show nsites
-    PH = set_nsite(PH, nsites)
-    if nsites>0
-      PH = position(PH, psi, region)
+  if outputlevel >= 2
+    region = first(sweep_plan[which_region_update])
+    @printf("Sweep %d, region=%s \n", which_sweep, region)
+    print("  Truncated using")
+    @printf(" cutoff=%.1E", cutoff)
+    @printf(" maxdim=%d", maxdim)
+    @printf(" mindim=%d", mindim)
+    println()
+    if spec != nothing
+      @printf(
+        "  Trunc. err=%.2E, bond dimension %d\n",
+        spec.truncerr,
+        linkdim(state, edgetype(state)(region...))
+      )
     end
-    direction == 1 && continue
-    psi, phi = extract_local_tensor(psi, region, maxdim)
-
-    psi,phi,PH = step_expander(
-      PH,
-      psi,
-      phi,
-      region,
-      svd_func;
-      direction=direction,
-      maxdim = maxdim_expand,
-      expand_dir=-1,
-      cutoff,
-      kwargs...,
-    )
-
-    normalize && (phi /= norm(phi))
-
-    drho = nothing
-    ortho = "left"
-
-    (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,[src(region),dst(region)]))
-    psi, spec = insert_local_tensor(
-      psi, phi, region, maxdim; eigen_perturbation=drho, ortho, normalize, kwargs...
-    )
-    (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,region))
+    flush(stdout)
   end
-
-  normalize && normalize!(psi)
-  return psi, PH
 end
 
-function update_step(
+function sweep_update(
   solver,
-  PH,
-  psi::AbstractTTN;
-  cutoff::AbstractFloat=1E-16,
-  maxdim::Int=typemax(Int),
-  maxdim_expand::Int,
-  mindim::Int=1,
-  normalize::Bool=false,
-  nsite::Int=2,
-  outputlevel::Int=0,
-  sw::Int=1,
-  sweep_regions=update_sweep(nsite, psi),
-  kwargs...,
+  projected_operator,
+  state::AbstractTTN;
+  normalize::Bool=false,      # ToDo: think about where to put the default, probably this default is best defined at algorithmic level
+  outputlevel,
+  region_update_printer=region_update_printer,
+  (region_observer!)=observer(),  # ToDo: change name to region_observer! ?
+  which_sweep::Int,
+  sweep_params::NamedTuple,
+  sweep_plan,
+  updater_kwargs,
 )
-  info = nothing
-  PH = copy(PH)
-  psi = copy(psi)
-  observer = get(kwargs, :observer!, nothing)
+  insert_function!(region_observer!, "region_update_printer" => region_update_printer) #ToDo fix this
 
   # Append empty namedtuple to each element if not already present
-  # (Needed to handle user-provided sweep_regions)
-  sweep_regions = append_missing_namedtuple.(to_tuple.(sweep_regions))
+  # (Needed to handle user-provided region_updates)
+  sweep_plan = append_missing_namedtuple.(to_tuple.(sweep_plan))
 
-  if nv(psi) == 1
+  if nv(state) == 1
     error(
       "`alternating_update` currently does not support system sizes of 1. You can diagonalize the MPO tensor directly with tools like `LinearAlgebra.eigen`, `KrylovKit.exponentiate`, etc.",
     )
   end
 
-  maxtruncerr = 0.0
-  info = nothing
-  for (n, (region, step_kwargs)) in enumerate(sweep_regions)
-    psi, PH, spec, info = local_update(
+  for which_region_update in eachindex(sweep_plan)
+    (region, region_kwargs) = sweep_plan[which_region_update]
+    region_kwargs = merge(region_kwargs, sweep_params)    # sweep params has precedence over step_kwargs
+    state, projected_operator = region_update(
       solver,
-      PH,
-      psi,
-      region;
-      outputlevel,
-      cutoff,
-      maxdim,
-      maxdim_expand,
-      mindim,
+      projected_operator,
+      state;
       normalize,
-      step_kwargs,
-      kwargs...,
-    )
-    
-    maxtruncerr = isnothing(spec) ? maxtruncerr : max(maxtruncerr, spec.truncerr)
-
-    if outputlevel >= 2
-      #if get(data(sweep_step),:time_direction,0) == +1
-      #  @printf("Sweep %d, direction %s, position (%s,) \n", sw, direction, pos(step))
-      #end
-      print("  Truncated using")
-      @printf(" cutoff=%.1E", cutoff)
-      @printf(" maxdim=%.1E", maxdim)
-      print(" mindim=", mindim)
-      #print(" current_time=", round(current_time; digits=3))
-      println()
-      # if spec != nothing
-      if typeof(pos(sweep_step)) == NamedEdge{Int}
-        @printf(
-          "  Trunc. err=%.2E, bond dimension %d\n",
-          spec.truncerr,
-          0,
-          linkdim(psi, edgetype(psi)(pos(sweep_step)))
-        )
-      end
-      flush(stdout)
-    end
-    update!(
-      observer;
-      sweep_step=n,
-      total_sweep_steps=length(sweep_regions),
-      end_of_sweep=(n == length(sweep_regions)),
-      psi,
-      region,
-      sweep=sw,
-      PH,
-      spec,
       outputlevel,
-      info,
-      step_kwargs...,
+      which_sweep,
+      sweep_plan,
+      which_region_update,
+      region_kwargs,
+      region_observer!,
+      updater_kwargs,
     )
   end
+
+  select!(region_observer!, Observers.DataFrames.Not("region_update_printer")) # remove update_printer
   # Just to be sure:
-  normalize && normalize!(psi)
-  return psi, PH, (; maxtruncerr)
+  normalize && normalize!(state)
+
+  return state, projected_operator
 end
 
+#
 # Here extract_local_tensor and insert_local_tensor
 # are essentially inverse operations, adapted for different kinds of 
 # algorithms and networks.
@@ -184,152 +104,148 @@ end
 # tensors of the network and returns the result, while 
 # insert_local_tensors takes that tensor and factorizes it back
 # apart and puts it back into the network.
+#
 
-function extract_local_tensor(psi::AbstractTTN, pos::Vector)
-  return psi, prod(psi[v] for v in pos)
+function extract_local_tensor(state::AbstractTTN, pos::Vector)
+  return state, prod(state[v] for v in pos)
 end
 
-function extract_local_tensor(psi::AbstractTTN, pos::Vector, m::Int)
-  extract_local_tensor(psi, pos)
-end
-
-function extract_local_tensor(psi::AbstractTTN, pos::Vector, c::Float64, m::Int)
-  extract_local_tensor(psi, pos)
-end
-
-function extract_local_tensor(psi::AbstractTTN, e::NamedEdge)
-  left_inds = uniqueinds(psi, e)
-  U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e))
-  psi[src(e)] = U
-  return psi, S * V
-end
-
-function extract_local_tensor(psi::AbstractTTN, e::NamedEdge, m::Int)
-  left_inds = uniqueinds(psi, e)
-  U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e), maxdim=m)
-  psi[src(e)] = U
-
-  return psi, S * V
-end
-
-function extract_local_tensor(psi::AbstractTTN, e::NamedEdge, cutoff::Float64,m::Int)
-  left_inds = uniqueinds(psi, e)
-  U, S, V = svd(psi[src(e)], left_inds; lefttags=tags(psi, e), righttags=tags(psi, e), cutoff=cutoff, maxdim=m)
-  psi[src(e)] = U
-
-  return psi, S * V
+function extract_local_tensor(state::AbstractTTN, e::NamedEdge)
+  left_inds = uniqueinds(state, e)
+  U, S, V = svd(state[src(e)], left_inds; lefttags=tags(state, e), righttags=tags(state, e))
+  state[src(e)] = U
+  return state, S * V
 end
 
 # sort of multi-site replacebond!; TODO: use dense TTN constructor instead
 function insert_local_tensor(
-  psi::AbstractTTN,
+  state::AbstractTTN,
   phi::ITensor,
-  pos::Vector,
-  maxdim::Int;
-  which_decomp=nothing,
+  pos::Vector;
   normalize=false,
+  # factorize kwargs
+  maxdim=nothing,
+  mindim=nothing,
+  cutoff=nothing,
+  which_decomp=nothing,
   eigen_perturbation=nothing,
-  kwargs...,
+  ortho=nothing,
 )
   spec = nothing
   for (v, vnext) in IterTools.partition(pos, 2, 1)
-    e = edgetype(psi)(v, vnext)
-    indsTe = inds(psi[v])
+    e = edgetype(state)(v, vnext)
+    indsTe = inds(state[v])
     L, phi, spec = factorize(
-      phi, indsTe; which_decomp, tags=tags(psi, e), eigen_perturbation, maxdim=maxdim, kwargs...
+      phi,
+      indsTe;
+      tags=tags(state, e),
+      maxdim,
+      mindim,
+      cutoff,
+      which_decomp,
+      eigen_perturbation,
+      ortho,
     )
-    psi[v] = L
+    state[v] = L
     eigen_perturbation = nothing # TODO: fix this
   end
-  psi[last(pos)] = phi
-  psi = set_ortho_center(psi, [last(pos)])
-  @assert isortho(psi) && only(ortho_center(psi)) == last(pos)
-  normalize && (psi[last(pos)] ./= norm(psi[last(pos)]))
+  state[last(pos)] = phi
+  state = set_ortho_center(state, [last(pos)])
+  @assert isortho(state) && only(ortho_center(state)) == last(pos)
+  normalize && (state[last(pos)] ./= norm(state[last(pos)]))
   # TODO: return maxtruncerr, will not be correct in cases where insertion executes multiple factorizations
-  return psi, spec
+  return state, spec
 end
 
-function insert_local_tensor(psi::AbstractTTN, phi::ITensor, e::NamedEdge, maxdim::Int; kwargs...)
-  # if dim(commonind(phi, psi[src(e)])) > maxdim
-  #   U, S, V = svd(phi, commonind(phi, psi[src(e)]); maxdim, lefttags=tags(commonind(phi,psi[src(e)])), righttags=tags(commonind(phi,psi[src(e)])))
-  #   psi[src(e)] *= U
-  #   psi[dst(e)] *= S*V
-  # else
-    psi[dst(e)] *= phi
-  # end
-
-  psi = set_ortho_center(psi, [dst(e)])
-  return psi, nothing
+function insert_local_tensor(state::AbstractTTN, phi::ITensor, e::NamedEdge; kwargs...)
+  state[dst(e)] *= phi
+  state = set_ortho_center(state, [dst(e)])
+  return state, nothing
 end
 
 #TODO: clean this up:
+# also can we entirely rely on directionality of edges by construction?
 current_ortho(::Type{<:Vector{<:V}}, st) where {V} = first(st)
 current_ortho(::Type{NamedEdge{V}}, st) where {V} = src(st)
 current_ortho(st) = current_ortho(typeof(st), st)
 
-function local_update(
-  solver, PH, psi, region; outputlevel, cutoff, maxdim, maxdim_expand, mindim, normalize, step_kwargs=NamedTuple(), kwargs...
+function region_update(
+  updater,
+  projected_operator,
+  state;
+  normalize,
+  outputlevel,
+  which_sweep,
+  sweep_plan,
+  which_region_update,
+  region_kwargs,
+  region_observer!,
+  #insertion_kwargs,  #ToDo: later
+  #extraction_kwargs, #ToDo: implement later with possibility to pass custom extraction/insertion func (or code into func)
+  updater_kwargs,
 )
-  direction = get(step_kwargs, :substep, 1)
-  dt = get(step_kwargs, :time_step,1)
-  expander = get(kwargs, :expander, nothing)
-  cutoff_expand = get(kwargs, :cutoff_expand,cutoff/abs(dt))
-  #@show cutoff_expand
-  psi = orthogonalize(psi, current_ortho(region))
-  psi, phi = extract_local_tensor(psi, region,  cutoff, maxdim)
-
-  nsites = (region isa AbstractEdge) ? 0 : length(region)
-  PH = set_nsite(PH, nsites)
-  PH = position(PH, psi, region)
-
-  if !isnothing(expander)
-    svd_func = get(kwargs, :svd_func, _svd_solve_normal)
-    #@show cutoff,cutoff_expand
-    @timeit_debug timer "local expansion" begin
-      psi,phi,PH = expander(
-        PH,
-        psi,
-        phi,
-        region,
-        svd_func;
-        direction,
-        maxdim = maxdim_expand,
-        cutoff = cutoff_expand,
-        kwargs...,
-      )
-    end
-
-    # update environment
-    nsites = (region isa AbstractEdge) ? 0 : length(region)
-    PH = set_nsite(PH, nsites)
-    PH = position(PH, psi, region)
+  region = first(sweep_plan[which_region_update])
+  state = orthogonalize(state, current_ortho(region))
+  state, phi = extract_local_tensor(state, region;)
+  nsites = (region isa AbstractEdge) ? 0 : length(region) #ToDo move into separate funtion
+  projected_operator = set_nsite(projected_operator, nsites)
+  projected_operator = position(projected_operator, state, region)
+  state! = Ref(state) # create references, in case solver does (out-of-place) modify PH or state
+  projected_operator! = Ref(projected_operator)
+  phi, info = updater(
+    phi;
+    state!,
+    projected_operator!,
+    outputlevel,
+    which_sweep,
+    sweep_plan,
+    which_region_update,
+    region_kwargs,
+    updater_kwargs,
+  )  # args passed by reference are supposed to be modified out of place
+  state = state![] # dereference
+  projected_operator = projected_operator![]
+  if !(phi isa ITensor && info isa NamedTuple)
+    println("Solver returned the following types: $(typeof(phi)), $(typeof(info))")
+    error("In alternating_update, solver must return an ITensor and a NamedTuple")
   end
-
-
-  info = []
-  ### solver behaves weirdly sometimes, stating that PH is not hermitian; this fixes it ###
-  #if false
-    @timeit_debug timer "local solve" begin
-      while true
-        try 
-          phi, info = solver(PH, phi; normalize, region, step_kwargs..., kwargs...)
-          break
-        catch e
-          @show e
-        end
-      end
-    end
-  #end
   normalize && (phi /= norm(phi))
 
   drho = nothing
-  ortho = "left"
+  ortho = "left"    #i guess with respect to ordered vertices that's valid but may be cleaner to use next_region logic
+  #if noise > 0.0 && isforward(direction)
+  #  drho = noise * noiseterm(PH, phi, ortho) # TODO: actually implement this for trees...
+  # so noiseterm is a solver
+  #end
 
-  (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,[src(region),dst(region)]))
-  psi, spec = insert_local_tensor(
-    psi, phi, region, maxdim; eigen_perturbation=drho,cutoff=cutoff, ortho, normalize, kwargs...
+  state, spec = insert_local_tensor(
+    state,
+    phi,
+    region;
+    eigen_perturbation=drho,
+    ortho,
+    normalize,
+    maxdim=region_kwargs.maxdim,
+    mindim=region_kwargs.mindim,
+    cutoff=region_kwargs.cutoff,
   )
-  (typeof(region)==NamedEdge{Int}) && (PH = position(PH,psi,region))
 
-  return psi, PH, spec, info
+  update!(
+    region_observer!;
+    cutoff,
+    maxdim,
+    mindim,
+    which_region_update,
+    sweep_plan,
+    total_sweep_steps=length(sweep_plan),
+    end_of_sweep=(which_region_update == length(sweep_plan)),
+    state,
+    region,
+    which_sweep,
+    spec,
+    outputlevel,
+    info...,
+    region_kwargs...,
+  )
+  return state, projected_operator
 end
