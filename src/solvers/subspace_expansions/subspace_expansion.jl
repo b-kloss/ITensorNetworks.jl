@@ -77,16 +77,20 @@ function _two_site_expand_core(
   use_absolute_cutoff
 ) 
   #@show "expanding"
+  #@show vertexpair
   theflux=flux(phi0)
   svd_func=svd_func_expand
-  n1=first(vertexpair)
-  n2=last(vertexpair)
+  v1=first(vertexpair)
+  v2=last(vertexpair)
   #@show n1, n2
-  verts = [n1,n2]
+  verts = [v1,v2]
+  n1,n2=1,2
   psis = map(n -> psi[n], verts)  # extract local site tensors
-  left_inds = uniqueinds(psi[n1], psi[n2])
-  U, S, V = svd(psis[findall(verts.==n1)[]], left_inds; lefttags=tags(commonind(psi[n1],psi[n2])), righttags=tags(commonind(psi[n1],psi[n2])))
-  psis[findall(verts.==n1)[]]= U
+  left_inds = uniqueinds(psis[n1], psis[n2])
+
+  
+  U, S, V = svd(psis[n1], left_inds; lefttags=tags(commonind(psis[n1],psis[n2])), righttags=tags(commonind(psis[n1],psis[n2])))
+  psis[n1]= U
   phi = S*V
   ##body start
 
@@ -117,6 +121,9 @@ function _two_site_expand_core(
       end *PH.H[n])
     end
   end
+  @show inds(first(envs))
+  @show inds(last(envs))
+  
   envs=[last(nullVecs)(last(envs)),first(nullVecs)(first(envs))]
 
   ininds = uniqueinds(last(psis),phi)
@@ -179,8 +186,8 @@ function _two_site_expand_core(
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
   #
   if typeof(region) != NamedEdge{Int}
-    psi[n1]=psi[n1]*new_phi
-    new_phi=psi[n1]
+    psi[v1]=psi[v1]*new_phi
+    new_phi=psi[v1]
   end
 
   return psi, new_phi, PH, true

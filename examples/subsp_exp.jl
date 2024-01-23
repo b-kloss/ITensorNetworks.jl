@@ -58,7 +58,7 @@ let
   Random.seed!(1234)
   tmax = 2.
   dt = 0.025
-  N = 16
+  N = 10
   J = -1.
   g = -1.
   tau = 0.1
@@ -66,14 +66,28 @@ let
 
   # g = named_binary_tree(3)
   # g = named_grid((12,1))
-
+  do_tree=true
   # with QNs
-   s = siteinds("S=1/2", N; conserve_qns=true)
-   ψ = random_mps(s; states=(x-> isodd(x) ? "Up" : "Dn"), internal_inds_space=1)
-  # ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
-   model = heisenberglin(N)
-   H = mpo(model, s)
-  @show s
+  if do_tree
+    tooth_lengths = fill(2, 3)
+    c = named_comb_tree(tooth_lengths)
+    s = siteinds("S=1/2", c; conserve_qns=true)
+    
+    d = Dict()
+    for (i, v) in enumerate(vertices(s))
+      d[v] = isodd(i) ? "Up" : "Dn"
+    end
+    states = v -> d[v]
+    ψ = TTN(s, states)
+    model = ITensorNetworks.heisenberg(s)
+    H = TTN(model, s)
+  else
+    s = siteinds("S=1/2",N; conserve_qns=true)
+    ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
+    model=heisenberglin(N)
+    H = mpo(model, s)
+  end
+    #@show s
   # without Qns
   #g = chain_lattice_graph(N)
   #s = siteinds("S=1/2", g)
