@@ -1,72 +1,63 @@
-# function general_expander(; expander_backend="none", svd_backend="svd", kwargs...)
-#   function expander(
-#     PH,
-#     psi::ITensorNetworks.AbstractTTN{Vert},
-#     phi,
-#     region,
-#     direction;
-#     maxdim,
-#     cutoff=1e-10,
-#     atol=1e-8,
-#     kwargs...,
-#   ) where {Vert}
-#
-#     cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
-#     expander_cache = get(kwargs, :expander_cache, Any[])
-#     nsites = (region isa AbstractEdge) ? 0 : length(region)
-#
-#     # determine which expansion method and svd method to use
-#     if expander_backend == "none"
-#       return psi, phi, PH
-#     elseif expander_backend == "full"
-#       _expand_core = _full_expand_core_vertex
-#       expand_dir = get(kwargs, :expand_dir, -1)
-#       
-#     elseif expander_backend == "two_site"
-#       _expand_core = _two_site_expand_core
-#       expand_dir = get(kwargs, :expand_dir, +1)
-#       #enforce expand_dir in the tested direction
-#       @assert expand_dir==1
-#       
-#     else
-#       error("expander_backend=$expander_backend not recognized (options are \"2-site\" or \"full\")")
-#     end
-#
-#     if svd_backend == "svd"
-#       svd_func = _svd_solve_normal
-#     elseif svd_backend == "krylov"
-#       svd_func = _krylov_svd_solve
-#     else
-#       error("svd_backend=$svd_backend not recognized (options are \"svd\" or \"krylov\")")
-#     end
-#
-#     cutoff_compress = get(kwargs, :cutoff_compress, 1e-12)
-#     expander_cache = get(kwargs, :expander_cache, Any[])
-#     
-#     to = get(kwargs, :to, Any[])
-#
-#     # subspace expansion
-#     psi, phi, PH = _expand_core(
-#       PH, psi, phi, region, svd_func; expand_dir, expander_cache, maxdim, cutoff, cutoff_compress, atol, to,
-#     )
-#
-#
-#     # update environment
-#     PH = set_nsite(PH, nsites)
-#     PH = position(PH, psi, region)
-#
-#     return psi, phi, PH
-#   end
-#   return expander
-# end
-
-
-
-#_svd_solve_normal(envMap,envMapDag, left_ind;kwargs...)=svd_solve_normal(envMap, left_ind;maxdim=get(::maxdim,kwargs),cutoff=cutoff)
-#_svd_solve_normal(T,envMap,envMapDag, left_ind;kwargs...)=svd_solve_normal(envMap, left_ind;maxdim=maxdim,cutoff=cutoff)
-
-
-
+function two_site_expansion_updater(
+  init;
+  state!,
+  projected_operator!,
+  outputlevel,
+  which_sweep,
+  sweep_plan,
+  which_region_update,
+  region_kwargs,
+  updater_kwargs,
+)
+  (;maxdim,cutoff,time_step) = region_kwargs
+ # @show maxdim, cutoff, time_step
+ # @show region_kwargs
+  
+  #ToDo: handle timestep==Inf for DMRG case
+  default_updater_kwargs = (;
+    svd_func_expand=rsvd_iterative,
+    maxdim = Int(ceil((2.0 ^ (1 / 3))) * maxdim),
+    cutoff = isinf(time_step) ? cutoff : cutoff/abs(time_step), # ToDo verify that this is the correct way of scaling the cutoff
+    use_relative_cutoff=false,
+    use_absolute_cutoff=true,
+  )
+  updater_kwargs = merge(default_updater_kwargs, updater_kwargs)
+  #@show updater_kwargs
+  # if on edge return without doing anything
+  region=first(sweep_plan[which_region_update])
+  #@show region, which_region_update == length(sweep_plan)
+  typeof(region)<:NamedEdge && return init, (;)
+  region=only(region)
+  #figure out next region, since we want to expand there
+  #ToDo account for non-integer indices into which_region_update
+  next_region = which_region_update == length(sweep_plan) ? nothing : first(sweep_plan[which_region_update + 1]) 
+  previous_region = which_region_update == 1 ? nothing : first(sweep_plan[which_region_update - 1])
+  isnothing(next_region) && return init, (;)
+  #@show region, next_region
+  #@show typeof(first(sweep_plan[which_region_update])), typeof(region), typeof(next_region), next_region
+  !(typeof(next_region)<:NamedEdge) && return init, (;)
+  #@assert typeof(next_region)<:NamedEdge
+  #@show region, next_region, dst(next_region), src(next_region)
+  next_vertex= src(next_region) == region ? dst(next_region) : src(next_region)
+  vp = region=>next_vertex
+  #dereference and copy # ToDo pass the references into two_site_expand_core 
+  PH=copy(projected_operator![])
+  state=copy(state![])
+  state, phi, PH, has_changed = _two_site_expand_core(PH,state,init,region,vp;  expand_dir=1, updater_kwargs...)
+  #rereference, regardless of outcome
+  _nsites = (region isa AbstractEdge) ? 0 : length(region) #should be 1
+  #@show _nsites
+  PH = set_nsite(PH, _nsites)
+  PH = position(PH, state, first(sweep_plan[which_region_update]))
+  #@show nsite(PH)
+  projected_operator![]=PH
+  state![]=state
+  
+  !has_changed && return init, (;)
+  
+  
+  return phi, (;)
+end
 
 function implicit_nullspace(A, linkind)
   ###only works when applied in the direction of the environment tensor, not the other way (due to use of ITensorNetworkMap which is not reversible)
@@ -77,43 +68,35 @@ function implicit_nullspace(A, linkind)
 end
 
 function _two_site_expand_core(
-  PH, psi, phi0, region, svd_func; direction, expand_dir=+1, maxdim, cutoff, atol=1e-8, kwargs...,
-)
-  #enforce expand_dir in the tested direction
-  # @assert expand_dir==+1
-  (typeof(region)==NamedEdge{Int}) && return psi, phi0, PH
-  if typeof(region) == NamedEdge{Int} 
-    n1,n2 = (src(region),dst(region))
-    verts = expand_dir == 1 ? [n1,n2] : [n2,n1]
-    psis = map(n -> psi[n], verts)
-    phi=copy(phi0)
-  else
+  PH, psi, phi0, region,vertexpair::Pair;
+  expand_dir=1,
+  svd_func_expand,
+  cutoff,
+  maxdim,
+  use_relative_cutoff,
+  use_absolute_cutoff
+) 
+  #@show "expanding"
+  theflux=flux(phi0)
+  svd_func=svd_func_expand
+  n1=first(vertexpair)
+  n2=last(vertexpair)
+  #@show n1, n2
+  verts = [n1,n2]
+  psis = map(n -> psi[n], verts)  # extract local site tensors
+  left_inds = uniqueinds(psi[n1], psi[n2])
+  U, S, V = svd(psis[findall(verts.==n1)[]], left_inds; lefttags=tags(commonind(psi[n1],psi[n2])), righttags=tags(commonind(psi[n1],psi[n2])))
+  psis[findall(verts.==n1)[]]= U
+  phi = S*V
+  ##body start
 
-    ## kind of hacky - only works for mps. More general?
-    n1 = first(region)
-    theflux=flux(psi[n1])
-    if direction == 1 
-      n2 = expand_dir == 1 ? n1-1 : n1+1
-    else
-      n2 = expand_dir == 1 ? n1+1 : n1-1
-    end
-    (n2 < 1 || n2 > length(vertices(psi))) && return psi,phi0,PH
-    verts = [n1,n2]
-    psis = map(n -> psi[n], verts)
-    ## bring it into the same functional form used for the Named-Edge case by doing an svd
-    left_inds = uniqueinds(psi[n1], psi[n2])
-    U, S, V = svd(psis[findall(verts.==n1)[]], left_inds; lefttags=tags(commonind(psi[n1],psi[n2])), righttags=tags(commonind(psi[n1],psi[n2])))
-    psis[findall(verts.==n1)[]]= U
-    phi = S*V
-  end
- 
   old_linkdim = dim(commonind(first(psis), phi))
 
   PH = set_nsite(PH, 2)
   PH = position(PH, psi, verts)
 
   # don't expand if we are already at maxdim
-  (old_linkdim >= maxdim) && return psi, phi0, PH
+  (old_linkdim >= maxdim) && return psi, phi0, PH, false
   #@show "expanding", maxdim-old_linkdim
   linkinds = map(psi -> commonind(psi, phi), psis)
 
@@ -155,9 +138,9 @@ function _two_site_expand_core(
       U,S,V = svd_func(eltype(envMap),envMap,envMapDag, uniqueinds(inds(cout),outinds); flux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
     end
   end
-  isnothing(U) && return psi, phi0, PH
+  isnothing(U) && return psi, phi0, PH, false
   ###FIXME: somehow the svd funcs sometimes return empty ITensors instead of nothing, that should be caught in the SVD routines instead...
-  all(isempty.([U,S,V])) && return psi, phi0, PH
+  all(isempty.([U,S,V])) && return psi, phi0, PH, false
   
   U *= dag(cout)
   V *= dag(cin)
@@ -194,20 +177,20 @@ function _two_site_expand_core(
   end
 
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
-  ##ToDo:maybe trigger with debug flag
-  # @assert norm(psi[last(verts)]*new_phi*psi[first(verts)] - old_twosite_tensor) < 50*eps(Float64)
-  
+  #
   if typeof(region) != NamedEdge{Int}
-    psi[n1]*=new_phi
+    psi[n1]=psi[n1]*new_phi
     new_phi=psi[n1]
   end
-  return psi, new_phi, PH
-  
+
+  return psi, new_phi, PH, true
+  ##body end
 end
+
 
 function _full_expand_core_vertex(
     PH, psi, phi, region, svd_func; direction, expand_dir=-1, expander_cache=Any[], maxdim, cutoff, atol=1e-8, kwargs...,
-)
+) ###ToDo: adapt to current interface, broken as of now.
   #@show cutoff
   #enforce expand_dir in the tested direction
   @assert expand_dir==-1

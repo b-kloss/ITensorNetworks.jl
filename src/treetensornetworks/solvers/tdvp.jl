@@ -79,7 +79,7 @@ function tdvp(
   function sweep_time_printer(; outputlevel, which_sweep, kwargs...)
     if outputlevel >= 1
       sweeps_per_step = order ÷ 2
-      if sweep % sweeps_per_step == 0
+      if which_sweep % sweeps_per_step == 0
         current_time = (which_sweep / sweeps_per_step) * time_step
         println("Current time (sweep $which_sweep) = ", round(current_time; digits=3))
       end
