@@ -9,7 +9,7 @@ using ITensors.HDF5
 using Random
 using Dictionaries
 
-include("observer.jl")
+#include("observer.jl")
 
 ## rung decoupled heisenberg chain model ##
 function rung_decoupl_heisenberg(N; J1=1.0, J2=0.5)
@@ -91,16 +91,16 @@ let
   #
   model_name = "ising"
 
-  obs1 = Observer("zPol" => return_z) #, "en" => return_en)
-  obs2 = Observer("zPol" => return_z) #, "en" => return_en)
-  obs3 = Observer("zPol" => return_z) #, "en" => return_en) 
-  obs4 = Observer("zPol" => return_z) #, "en" => return_en) 
-  obs5 = Observer("zPol" => return_z) #, "en" => return_en) 
-  name_obs1 = "data/"*model_name*"_two_site_svd_N=$(N)_D=$(D)"
-  name_obs2 = "data/"*model_name*"_two_site_krylov_N=$(N)_D=$(D)"
-  name_obs3 = "data/"*model_name*"_full_svd_N=$(N)_D=$(D)"
-  name_obs4 = "data/"*model_name*"_full_krylov_N=$(N)_D=$(D)"
-  name_obs5 = "data/"*model_name*"_two_site_general_N=$(N)_D=$(D)"
+  #obs1 = Observer("zPol" => return_z) #, "en" => return_en)
+  #obs2 = Observer("zPol" => return_z) #, "en" => return_en)
+  #obs3 = Observer("zPol" => return_z) #, "en" => return_en) 
+  #obs4 = Observer("zPol" => return_z) #, "en" => return_en) 
+  #obs5 = Observer("zPol" => return_z) #, "en" => return_en) 
+  #name_obs1 = "data/"*model_name*"_two_site_svd_N=$(N)_D=$(D)"
+  #name_obs2 = "data/"*model_name*"_two_site_krylov_N=$(N)_D=$(D)"
+  #name_obs3 = "data/"*model_name*"_full_svd_N=$(N)_D=$(D)"
+  #name_obs4 = "data/"*model_name*"_full_krylov_N=$(N)_D=$(D)"
+  #name_obs5 = "data/"*model_name*"_two_site_general_N=$(N)_D=$(D)"
 
   ################### DMRG #################
 
@@ -114,7 +114,9 @@ let
 
   ################### TDVP #################
   tdvp_cutoff=1e-14
-  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=tdvp_cutoff,cutoff_expand=(tdvp_cutoff/dt), outputlevel=1)
+  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=tdvp_cutoff, outputlevel=1,
+  updater_kwargs=(;expand_kwargs=(;),exponentiate_kwargs=(;)))
+  
   @show tdvp_kwargs
   println("================================================================")
 
@@ -167,15 +169,15 @@ let
   println("================================================================")
 
   expander_cache=Any[]
-  ϕ5 = tdvp(H, -im*tmax, ψ; tdvp_kwargs..., 
-            expander=ITensorNetworks._two_site_expand_core, 
+  ϕ5 = tdvp(ITensorNetworks.local_expand_and_exponentiate_updater,H, -im*tmax, ψ;  nsites=1, tdvp_kwargs..., 
+            #expander=ITensorNetworks._two_site_expand_core, 
             #step_expander=ITensorNetworks._full_expand_core_vertex, 
             
             #maxdim_expand=60,
-            svd_func=ITensorNetworks._svd_solve_normal,
-            nsite=1,
-            expander_cache=expander_cache,
-            (observer!)=obs5,
+            #svd_func=ITensorNetworks._svd_solve_normal,
+           
+            #expander_cache=expander_cache,
+            #(sweep_observer!)=obs5,
        )
  # @show obs5
   #savedata(name_obs5, obs5)

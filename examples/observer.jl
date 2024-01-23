@@ -12,17 +12,17 @@ function savedata(name::String, obs)
   end
 end
 
-function MPS(psi::TTN)
-    if !is_path_graph(siteinds(psi))
+function MPS(state::TTN)
+    if !is_path_graph(siteinds(state))
         error("Trying to convert to MPS although TTN is not a path graph. Exiting.")
     end
-    orts=ortho_center(psi)
+    orts=ortho_center(state)
     sort!(orts)
     ortrange=first(orts):last(orts)
     
-    psimps=ITensors.MPS([psi[i] for i in 1:nv(psi)])
-    ITensors.set_ortho_lims!(psimps,ortrange)
-    return psimps
+    statemps=ITensors.MPS([state[i] for i in 1:nv(state)])
+    ITensors.set_ortho_lims!(statemps,ortrange)
+    return statemps
 end
 
 # overload expect function to be more efficient for TTNs
@@ -50,8 +50,8 @@ function expect(
 end
 
 # Define stepobserver
-function step(; sweep)
-  return sweep
+function step(; which_sweep)
+  return which_sweep
 end
 
 ## just use step 
@@ -59,48 +59,48 @@ end
 #   return abs(current_time)
 # end
 
-function return_x(; psi)
-  expec = expect("Sx", psi)
+function return_x(; state)
+  expec = expect("Sx", state)
   return real(sum(expec)/length(expec))
 end
 
-function return_z(; psi)
-  expec = expect("Sz", psi)
+function return_z(; state)
+  expec = expect("Sz", state)
   return real.(collect(expec))
 end
 
-function return_z_mps(; psi)
-  expec = ITensors.expect(MPS(psi), "Sz")
+function return_z_mps(; state)
+  expec = ITensors.expect(MPS(state), "Sz")
   return real.(collect(expec))
 end
 
-function return_z_mean(; psi)
-  expec = expect("Sz", psi)
+function return_z_mean(; state)
+  expec = expect("Sz", state)
   return real(sum(expec)/length(expec))
 end
 
-function return_z_half(; psi)
-  half_len = floor(Int, length(vertices(psi))/2)
-  expec = expect("Sz", psi; vertices=half_len)
+function return_z_half(; state)
+  half_len = floor(Int, length(vertices(state))/2)
+  expec = expect("Sz", state; vertices=half_len)
   return real(sum(expec)/length(expec))
 end
 
-function return_en(; psi, PH)
+function return_en(; state, PH)
   H = PH.H
-  return real(inner(psi', H, psi) / inner(psi, psi))  
+  return real(inner(state', H, state) / inner(state, state))  
 end
 
-function return_state(; psi, end_of_sweep)
+function return_state(; state, end_of_sweep)
   if end_of_sweep
-      return psi
+      return state
   end
   return nothing
 end
 
-function return_entropy(; psi)
-  pos = floor(Int, length(vertices(psi))/2)
-  psi_ = orthogonalize(psi, pos)
-  _,S,_ = svd(psi_[pos], (commonind(psi_[pos-1], psi_[pos]), filter(i->hastags(i, "Site"), inds(psi_[pos]))))
+function return_entropy(; state)
+  pos = floor(Int, length(vertices(state))/2)
+  state_ = orthogonalize(state, pos)
+  _,S,_ = svd(state_[pos], (commonind(state_[pos-1], state_[pos]), filter(i->hastags(i, "Site"), inds(state_[pos]))))
   SvN = 0
   for n=1:dim(S,1)
       p = S[n,n]^2
@@ -124,68 +124,68 @@ end
 #   return nothing
 # end
 #
-# function return_x(; psi, end_of_sweep)
+# function return_x(; state, end_of_sweep)
 #   if end_of_sweep
-#     expec = expect("Sx", psi)
+#     expec = expect("Sx", state)
 #     return real(sum(expec)/length(expec))
 #   end
 #   return nothing
 # end
 #
-# function return_z(; psi, end_of_sweep)
+# function return_z(; state, end_of_sweep)
 #   if end_of_sweep
-#     expec = expect("Sz", psi)
+#     expec = expect("Sz", state)
 #     return real.(collect(expec))
 #   end
 #   return nothing
 # end
 #
-# function return_z_mps(; psi, end_of_sweep)
+# function return_z_mps(; state, end_of_sweep)
 #   if end_of_sweep
-#     expec = ITensors.expect(MPS(psi), "Sz")
+#     expec = ITensors.expect(MPS(state), "Sz")
 #     return real.(collect(expec))
 #   end
 #   return nothing
 # end
 #
-# function return_z_mean(; psi, end_of_sweep)
+# function return_z_mean(; state, end_of_sweep)
 #   if end_of_sweep
-#     expec = expect("Sz", psi)
+#     expec = expect("Sz", state)
 #     return real(sum(expec)/length(expec))
 #   end
 #   return nothing
 # end
 #
-# function return_z_half(; psi, end_of_sweep)
+# function return_z_half(; state, end_of_sweep)
 #   if end_of_sweep
-#     half_len = floor(Int, length(vertices(psi))/2)
-#     expec = expect("Sz", psi; vertices=half_len)
+#     half_len = floor(Int, length(vertices(state))/2)
+#     expec = expect("Sz", state; vertices=half_len)
 #     return real(sum(expec)/length(expec))
 #   end
 #   return nothing
 #
 # end
 #
-# function return_en(; psi, PH, end_of_sweep)
+# function return_en(; state, PH, end_of_sweep)
 #   if end_of_sweep
 #     H = PH.H
-#     return real(inner(psi', H, psi) / inner(psi, psi))  
+#     return real(inner(state', H, state) / inner(state, state))  
 #   end
 #   return nothing
 # end
 #
-# function return_state(; psi, end_of_sweep)
+# function return_state(; state, end_of_sweep)
 #   if end_of_sweep
-#       return psi
+#       return state
 #   end
 #   return nothing
 # end
 #
-# function return_entropy(; psi, end_of_sweep)
+# function return_entropy(; state, end_of_sweep)
 #     if end_of_sweep
-#     pos = floor(Int, length(vertices(psi))/2)
-#     psi_ = orthogonalize(psi, pos)
-#     _,S,_ = svd(psi_[pos], (commonind(psi_[pos-1], psi_[pos]), filter(i->hastags(i, "Site"), inds(psi_[pos]))))
+#     pos = floor(Int, length(vertices(state))/2)
+#     state_ = orthogonalize(state, pos)
+#     _,S,_ = svd(state_[pos], (commonind(state_[pos-1], state_[pos]), filter(i->hastags(i, "Site"), inds(state_[pos]))))
 #     SvN = 0
 #     for n=1:dim(S,1)
 #         p = S[n,n]^2
