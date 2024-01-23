@@ -56,20 +56,20 @@ end
 
 let
   Random.seed!(1234)
-  tmax = 2.
-  dt = 0.025
+  tmax = 20.
+  dt = 0.1
   N = 10
   J = -1.
   g = -1.
   tau = 0.1
-  D = 12
+  D = 128
 
   # g = named_binary_tree(3)
   # g = named_grid((12,1))
-  do_tree=true
+  do_tree=false
   # with QNs
   if do_tree
-    tooth_lengths = fill(2, 3)
+    tooth_lengths = fill(6, 8)
     c = named_comb_tree(tooth_lengths)
     s = siteinds("S=1/2", c; conserve_qns=true)
     
@@ -129,7 +129,9 @@ let
   ################### TDVP #################
   tdvp_cutoff=1e-14
   tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=tdvp_cutoff, outputlevel=1,
-  updater_kwargs=(;expand_kwargs=(;),exponentiate_kwargs=(;)))
+  updater_kwargs=(;expand_kwargs=(;cutoff=tdvp_cutoff/dt),exponentiate_kwargs=(;)))
+  #tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=tdvp_cutoff, outputlevel=1,
+  #updater_kwargs=(;))
   
   @show tdvp_kwargs
   println("================================================================")
@@ -184,7 +186,8 @@ let
 
   expander_cache=Any[]
   ϕ5 = tdvp(ITensorNetworks.local_expand_and_exponentiate_updater,H, -im*tmax, ψ;  nsites=1, tdvp_kwargs..., 
-            #expander=ITensorNetworks._two_site_expand_core, 
+  #ϕ5 = tdvp(H, -im*tmax, ψ;  nsites=2, tdvp_kwargs...,
+  #expander=ITensorNetworks._two_site_expand_core, 
             #step_expander=ITensorNetworks._full_expand_core_vertex, 
             
             #maxdim_expand=60,

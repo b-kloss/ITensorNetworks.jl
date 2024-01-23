@@ -25,17 +25,20 @@ function two_site_expansion_updater(
   #@show updater_kwargs
   # if on edge return without doing anything
   region=first(sweep_plan[which_region_update])
+  #@show region
   #@show region, which_region_update == length(sweep_plan)
   typeof(region)<:NamedEdge && return init, (;)
   region=only(region)
   #figure out next region, since we want to expand there
   #ToDo account for non-integer indices into which_region_update
   next_region = which_region_update == length(sweep_plan) ? nothing : first(sweep_plan[which_region_update + 1]) 
+  #@show next_region
   previous_region = which_region_update == 1 ? nothing : first(sweep_plan[which_region_update - 1])
   isnothing(next_region) && return init, (;)
   #@show region, next_region
   #@show typeof(first(sweep_plan[which_region_update])), typeof(region), typeof(next_region), next_region
   !(typeof(next_region)<:NamedEdge) && return init, (;)
+  !(region==src(next_region) || region==dst(next_region)) && return init, (;)
   #@assert typeof(next_region)<:NamedEdge
   #@show region, next_region, dst(next_region), src(next_region)
   next_vertex= src(next_region) == region ? dst(next_region) : src(next_region)
@@ -64,6 +67,10 @@ function implicit_nullspace(A, linkind)
   outind=uniqueinds(A,linkind)
   inind=outind  #?
   P=ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(A),linkind),prime(A,linkind)],inind,outind)
+  #@show ITensors.ITensorNetworkMaps.input_inds(P)
+  #@show ITensors.ITensorNetworkMaps.output_inds(P)
+  #@show inds(contract(P))
+  
   return x::ITensor -> x-P(x)
 end
 
@@ -85,10 +92,12 @@ function _two_site_expand_core(
   #@show n1, n2
   verts = [v1,v2]
   n1,n2=1,2
+  #@show v1, v2
   psis = map(n -> psi[n], verts)  # extract local site tensors
   left_inds = uniqueinds(psis[n1], psis[n2])
 
-  
+  #@show inds(psis[n1])
+  #@show inds(psis[n2])
   U, S, V = svd(psis[n1], left_inds; lefttags=tags(commonind(psis[n1],psis[n2])), righttags=tags(commonind(psis[n1],psis[n2])))
   psis[n1]= U
   phi = S*V
@@ -111,9 +120,24 @@ function _two_site_expand_core(
       return implicit_nullspace(psi, linkind)
     end
   end
+  #@show inds(first(nullVecs))
+  #@show inds(last(nullVecs))
   
   ## build environments
   g = underlying_graph(PH)
+  all_environments=ITensor[environment(PH, edge) for edge in incident_edges(PH)]
+  #envs=_get_environment_maps(PH)
+  #@show length(all_environments)
+  site_envs=[ filter(hascommoninds(PH.H[s]), all_environments) for s in sites(PH)]
+  #@show length.(site_envs)
+  #@show typeof(envs)
+  #@show envs[1]
+  #@show envs[2]
+  
+  #env1=noprime(reduce(*,site_envs[1],init=psis[1]))
+  #env2=noprime(reduce(*,site_envs[2],init=psis[2]))
+  #envs=[env1,env2]
+  
   @timeit_debug timer "build environments" begin
     envs = map(zip(verts,psis)) do (n,psi)
       return noprime(mapreduce(*, [v => n for v in neighbors(g, n) if !(v ∈ verts)]; init = psi) do e
@@ -121,13 +145,35 @@ function _two_site_expand_core(
       end *PH.H[n])
     end
   end
-  @show inds(first(envs))
-  @show inds(last(envs))
+  #@show PH.environments[NamedEdge((2, 1) => (3, 1))]
+  #@show inds(envs[1])
+  #@show inds(envs[2])
+  #@show inds(psis[1])
+  #@show inds(psis[2])
+  
+  
+  #@show keys(PH.environments)
+  #try
+  #  @show(PH.environments[NamedEdge(vertexpair)])
+  #catch
+  #  @show(PH.environments[NamedEdge(reverse(vertexpair))])
+  #end
+  i1= inds(first(envs))
+  i2= inds(last(envs))
   
   envs=[last(nullVecs)(last(envs)),first(nullVecs)(first(envs))]
-
+  @assert inds(first(envs))==i2
+  @assert inds(last(envs))==i1
+  
+  #@show inds(phi)
+  #@show inds(last(psis))
+  #@show inds(first(psis))
+  
   ininds = uniqueinds(last(psis),phi)
   outinds = uniqueinds(first(psis),phi)
+  #@show v1,v2
+  #@show ininds
+  #@show outinds
   cin=combiner(ininds)
   cout=combiner(outinds)
   envs=[cin*envs[1],cout*envs[2]]
@@ -185,10 +231,10 @@ function _two_site_expand_core(
 
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
   #
-  if typeof(region) != NamedEdge{Int}
-    psi[v1]=psi[v1]*new_phi
-    new_phi=psi[v1]
-  end
+  #if typeof(region) != NamedEdge{Int}
+  psi[v1]=psi[v1]*new_phi
+  new_phi=psi[v1]
+  #end
 
   return psi, new_phi, PH, true
   ##body end

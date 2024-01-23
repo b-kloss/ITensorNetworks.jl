@@ -47,24 +47,29 @@ function local_expand_and_exponentiate_updater(
   previous_region = which_region_update == 1 ? nothing : first(sweep_plan[which_region_update - 1])
   isnothing(next_region) && return result, (; info=exp_info)
   !(typeof(next_region)<:NamedEdge) && return result, (; info=exp_info)
+  !(region==src(next_region) || region==dst(next_region)) && return result, (; info=exp_info)
+  
   left_inds = uniqueinds(state![], next_region)
   #ToDo: return truncation error and append to info
   #println("truncating")
   #@show maxdim, cutoff
-  U, S, V = svd(result, left_inds; lefttags=tags(state![], next_region), righttags=tags(state![], next_region),maxdim, cutoff)
-  next_vertex= src(next_region) == region ? dst(next_region) : src(next_region)
-  state=copy(state![])
-  #@show inds(V)
-  state[next_vertex]=state[next_vertex] * V
-  _nsites = (region isa AbstractEdge) ? 0 : length(region) #should be 1
-  #@show _nsites
-  PH=copy(projected_operator![])
-  PH = set_nsite(PH, 2)
-  PH = position(PH, state, [region, next_vertex])
-  PH = set_nsite(PH, _nsites)
-  PH = position(PH, state, first(sweep_plan[which_region_update]))
-  state![]=state
-  projected_operator![]=PH
- # @show size(S)
-  return U*S, (; info=exp_info)
+  do_truncate=true
+  if do_truncate
+    U, S, V = svd(result, left_inds; lefttags=tags(state![], next_region), righttags=tags(state![], next_region),maxdim, cutoff)
+    next_vertex= src(next_region) == region ? dst(next_region) : src(next_region)
+    state=copy(state![])
+    #@show inds(V)
+    state[next_vertex]=state[next_vertex] * V
+    _nsites = (region isa AbstractEdge) ? 0 : length(region) #should be 1
+    #@show _nsites
+    PH=copy(projected_operator![])
+    PH = set_nsite(PH, 2)
+    PH = position(PH, state, [region, next_vertex])
+    PH = set_nsite(PH, _nsites)
+    PH = position(PH, state, first(sweep_plan[which_region_update]))
+    state![]=state
+    projected_operator![]=PH
+    return U*S, (; info=exp_info)
+  end
+  return result, (; info=exp_info)
 end
