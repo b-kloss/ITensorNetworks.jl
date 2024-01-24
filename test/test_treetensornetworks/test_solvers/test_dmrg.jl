@@ -172,7 +172,9 @@ end
   maxdim = [10, 20, 40, 100]
 
   # setup model
-  tooth_lengths = fill(2, 3)
+  Ly=2
+  Lx=3
+  tooth_lengths = fill(Ly, Lx)
   c = named_comb_tree(tooth_lengths)
   s = siteinds("Electron", c; conserve_qns=use_qns)
   U = 2.0
@@ -181,7 +183,8 @@ end
   os = ITensorNetworks.hubbard(c; U, t, tp)
 
   # for conversion to ITensors.MPO
-  linear_order = [4, 1, 2, 5, 3, 6]
+  #linear_order = [4, 1, 2, 5, 3, 6]
+  linear_order = collect(1:(Ly*Lx))
   vmap = Dictionary(vertices(s)[linear_order], 1:length(linear_order))
   sline = only.(collect(vertex_data(s)))[linear_order]
 
