@@ -17,8 +17,11 @@ function exponentiate_updater(
     ishermitian=true,
     issymmetric=true,
     eager=true,
+    #orth=KrylovKit.ClassicalGramSchmidt()
   )
-
+  #@show norm(init)
+  #projected_operator![](init) #FIXME: somehow necessary for KrylovKit to not get stuck?
+  #@assert !iszero(norm(init))
   updater_kwargs = merge(default_updater_kwargs, updater_kwargs)  #last collection has precedence
   result, exp_info = exponentiate(
     projected_operator![], region_kwargs.time_step, init; updater_kwargs...

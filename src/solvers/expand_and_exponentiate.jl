@@ -11,8 +11,6 @@ function local_expand_and_exponentiate_updater(
 )
   exponentiate_kwargs=updater_kwargs.exponentiate_kwargs
   expand_kwargs=updater_kwargs.expand_kwargs
-  #@show inds(init)
-  #call expand_updater, no need to define defaults
   expanded_init , _ = two_site_expansion_updater(init;
   state!,
   projected_operator!,
