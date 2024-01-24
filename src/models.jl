@@ -126,6 +126,12 @@ function ising(g::AbstractGraph; J1=-1, J2=0, h=0)
 end
 
 """
+t-tp tight-binding model on a chain of length N
+"""
+tight_binding(N::Integer; kwargs...) = tight_binding(grid((N,)); kwargs...)
+
+
+"""
 Random field J1-J2 Heisenberg model on a chain of length N
 """
 heisenberg(N::Integer; kwargs...) = heisenberg(grid((N,)); kwargs...)
