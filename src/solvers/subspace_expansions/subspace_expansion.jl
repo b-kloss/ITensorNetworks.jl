@@ -16,7 +16,7 @@ function two_site_expansion_updater(
   #ToDo: handle timestep==Inf for DMRG case
   default_updater_kwargs = (;
     svd_func_expand=rsvd_iterative,
-    maxdim = Int(ceil((2.0 ^ (1 / 3))) * maxdim),
+    maxdim = (maxdim==typemax(Int) ? maxdim : Int(ceil((2.0 ^ (1 / 3))) * maxdim)),
     cutoff = isinf(time_step) ? cutoff : cutoff/abs(time_step), # ToDo verify that this is the correct way of scaling the cutoff
     use_relative_cutoff=false,
     use_absolute_cutoff=true,
@@ -187,6 +187,9 @@ function _two_site_expand_core(
     elseif svd_func==ITensorNetworks.rsvd_iterative
       U,S,V = svd_func(eltype(first(envMap.itensors)),envMap,uniqueinds(inds(cout),outinds);theflux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
       use_absolute_cutoff=true)
+      #U,S,V = svd_func(contract(envMap),uniqueinds(inds(cout),outinds);maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
+      #use_absolute_cutoff=true)
+    
     else
       U,S,V = svd_func(eltype(envMap),envMap,envMapDag, uniqueinds(inds(cout),outinds); flux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
     end
