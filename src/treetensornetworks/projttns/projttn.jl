@@ -11,7 +11,7 @@ function ProjTTN(H::TTN)
   return ProjTTN(vertices(H), H, Dictionary{edgetype(H),ITensor}())
 end
 
-copy(P::ProjTTN) = ProjTTN(P.pos, copy(P.H), copy(P.environments))
+copy(P::ProjTTN) = ProjTTN(P.pos, copy(P.H), NamedGraphs.copy_keys_values(P.environments))
 
 # trivial if we choose to specify position as above; only kept to allow using alongside
 # ProjMPO
