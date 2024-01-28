@@ -17,6 +17,7 @@ function propagate_noninteracting(h::AbstractMatrix, c::AbstractMatrix, tau::Num
 end
 
 @testset "MPS TDVP" begin
+  
   @testset "2s vs 1s + local subspace" begin
     ITensors.enable_auto_fermion()
     Random.seed!(1234)
@@ -50,14 +51,14 @@ end
     #updater_kwargs=(;expand_kwargs=(;cutoff=cutoff/dt,svd_func_expand=_svd_solve_normal),exponentiate_kwargs=(;)))#,exponentiate_kwargs=(;tol=1e-8)))
     success=false
     psif=nothing
-    while !success
-      try
-        psif = tdvp(H, -1im*tf, psi; order=2,time_step= -1im*dt, cutoff, nsites=2,outputlevel=1)
-        success=true
-      catch
-        println("trying again")
-      end
-    end
+    #while !success
+    #  try
+    psif = tdvp(H, -1im*tf, psi; order=2,time_step= -1im*dt, cutoff, nsites=2,outputlevel=1)
+    #    success=true
+    #  catch
+    #    println("trying again")
+    #  end
+    #end
     
     @test inner(psi0,psi) ≈ 1 atol=1e-12
     #@show maxlinkdim(psife)
@@ -67,6 +68,7 @@ end
     #@test real.([mag_2s[v] for v in vertices(psif)]) ≈ res[:,end] atol=1e-3
     @test all(i->i<5e-3,abs.(real.([mag_2s[v] for v in vertices(psif)]) .- res[:,end]))
   end
+  
   @testset "2s vs 1s + local subspace" begin
     ITensors.enable_auto_fermion()
     Random.seed!(1234)
@@ -94,21 +96,21 @@ end
     end
     psi=mps(s;states)
     psi0=deepcopy(psi)
-    dt=0.025
+    dt=0.05
     @show siteinds(psi)
     tdvp_kwargs = (time_step = -im*dt, reverse_step=true, order=2, normalize=true, maxdim=D, cutoff=cutoff, outputlevel=1,
-    updater_kwargs=(;expand_kwargs=(;cutoff=cutoff/dt,svd_func_expand=_svd_solve_normal),exponentiate_kwargs=(;)))#,exponentiate_kwargs=(;tol=1e-8)))
+    updater_kwargs=(;expand_kwargs=(;cutoff=cutoff/dt,svd_func_expand=ITensorNetworks.rsvd_iterative),exponentiate_kwargs=(;)))#,exponentiate_kwargs=(;tol=1e-8)))
     success=false
     psife=nothing
-    while !success
-      try
-        psife = tdvp(ITensorNetworks.local_expand_and_exponentiate_updater,H, -1im*tf, psi; nsites=1, tdvp_kwargs...)
-        success=true
-      catch
-        println("trying again")
-      end
-      
-    end
+    #while !success
+    #  try
+    psife = tdvp(ITensorNetworks.local_expand_and_exponentiate_updater,H, -1im*tf, psi; nsites=1, tdvp_kwargs...)
+    #    success=true
+    #  catch
+    #    println("trying again")
+    #  end
+    #  
+    #end
     
     
     @test inner(psi0,psi) ≈ 1 atol=1e-12
@@ -116,6 +118,7 @@ end
     #mag_2s=expect("N",psif)
     mag_exp=expect("N",psife)
    # @test real.([mag_2s[v] for v in vertices(psif)]) ≈ res[:,end] atol=1e-3
+    @show maximum(abs.(real.([mag_exp[v] for v in vertices(psife)]) .- res[:,end]))
     @test all(i->i<5e-3,abs.(real.([mag_exp[v] for v in vertices(psife)]) .- res[:,end]))
   end
 
