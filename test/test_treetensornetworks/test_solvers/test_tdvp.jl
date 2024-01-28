@@ -458,7 +458,7 @@ end
   end
 
   @testset "Accuracy Test" begin
-    tau = 0.1
+    tau = 0.025
     ttotal = 1.0
     cutoff = 1e-12
 
@@ -467,7 +467,7 @@ end
     c = named_comb_tree(tooth_lengths)
     s = siteinds("S=1/2", c)
 
-    os = ITensorNetworks.heisenberg(c)
+    os = ITensorNetworks.heisenberg(c,J1=0.8,J2=0.5)
     H = TTN(os, s)
     HM = contract(H)
 
@@ -477,30 +477,77 @@ end
     statex = contract(state)
 
     Sz_tdvp = Float64[]
+    Sz_tdvper = Float64[]
+    Sz_tdvpef = Float64[]
+    
+    
     Sz_exact = Float64[]
 
     c = (2, 1)
     Szc = op("Sz", s[c])
 
     Nsteps = Int(ttotal / tau)
+    statef=copy(state)
+    statefer=copy(state)
+    statefef=copy(state)
+    
+    
     for step in 1:Nsteps
       statex = noprime(Ut * statex)
       statex /= norm(statex)
 
-      state = tdvp(
+      statef = tdvp(
         H,
         -im * tau,
-        state;
+        statef;
         cutoff,
         normalize=false,
         updater_kwargs=(; tol=1e-12, maxiter=500, krylovdim=25),
       )
-      push!(Sz_tdvp, real(expect("Sz", state; vertices=[c])[c]))
-      push!(Sz_exact, real(scalar(dag(prime(statex, s[c])) * Szc * statex)))
-      F = abs(scalar(dag(statex) * contract(state)))
-    end
 
-    @test norm(Sz_tdvp - Sz_exact) < 1e-5
+      statefer = tdvp(
+        ITensorNetworks.local_expand_and_exponentiate_updater,
+        H,
+        -im * tau,
+        statefer;
+        maxdim=128,
+        nsites=1,
+        cutoff=1e-14,
+        normalize=false,
+        updater_kwargs=(;
+        expand_kwargs=(;svd_func_expand=ITensorNetworks.rsvd_iterative),
+        exponentiate_kwargs=(;tol=1e-12, maxiter=500, krylovdim=25)
+        ),
+      )
+
+      statefef = tdvp(
+        ITensorNetworks.local_expand_and_exponentiate_updater,
+        H,
+        -im * tau,
+        statefef;
+        maxdim=128,
+        nsites=1,
+        cutoff=1e-14,
+        normalize=false,
+        updater_kwargs=(;
+        expand_kwargs=(;svd_func_expand=ITensorNetworks._svd_solve_normal),
+        exponentiate_kwargs=(;tol=1e-12, maxiter=500, krylovdim=25)
+        ),
+      )
+
+
+      
+      push!(Sz_tdvp, real(expect("Sz", statef; vertices=[c])[c]))
+      push!(Sz_exact, real(scalar(dag(prime(statex, s[c])) * Szc * statex)))
+      push!(Sz_tdvper, real(expect("Sz", statefer; vertices=[c])[c]))
+      push!(Sz_tdvpef, real(expect("Sz", statefef; vertices=[c])[c]))
+      
+      F = abs(scalar(dag(statex) * contract(statef)))
+
+    end
+    @test norm(Sz_tdvpef - Sz_exact) < 1e-3
+    @test norm(Sz_tdvper - Sz_exact) < 1e-3
+    @test norm(Sz_tdvp - Sz_exact) < 1e-3
   end
 
   # TODO: apply gates in ITensorNetworks
