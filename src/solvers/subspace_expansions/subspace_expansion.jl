@@ -44,38 +44,37 @@ function two_site_expansion_updater(
   next_vertex= src(next_region) == region ? dst(next_region) : src(next_region)
   vp = region=>next_vertex
   #dereference and copy # ToDo pass the references into two_site_expand_core 
-  PH=copy(projected_operator![])
-  state=copy(state![])
-  state, phi, PH, has_changed = _two_site_expand_core(PH,state,init,region,vp;  expand_dir=1, updater_kwargs...)
+  #PH=copy(projected_operator![])
+  #state=copy(state![])
+  phi, has_changed = _two_site_expand_core(init,region,vp;projected_operator!,state!,  expand_dir=1, updater_kwargs...)
+  @show has_changed, keys(projected_operator![].environments)
   #rereference, regardless of outcome
-  _nsites = (region isa AbstractEdge) ? 0 : length(region) #should be 1
-  #@show _nsites
-  PH = set_nsite(PH, _nsites)
-  PH = position(PH, state, first(sweep_plan[which_region_update]))
-  #@show nsite(PH)
-  projected_operator![]=PH
-  state![]=state
-  
   !has_changed && return init, (;)
-  
-  
   return phi, (;)
 end
 
+"""
+Returns a function which applies Nullspace projector to an ITensor with matching indices without
+explicitly constructing the projector as an ITensor or Network.
+"""
 function implicit_nullspace(A, linkind)
-  ###only works when applied in the direction of the environment tensor, not the other way (due to use of ITensorNetworkMap which is not reversible)
+  # only works when applied in the direction of the environment tensor, not the other way (due to use of ITensorNetworkMap which is not reversible)
   outind=uniqueinds(A,linkind)
   inind=outind  #?
+  # ToDo: implement without ITensorNetworkMap
   P=ITensors.ITensorNetworkMaps.ITensorNetworkMap([prime(dag(A),linkind),prime(A,linkind)],inind,outind)
-  #@show ITensors.ITensorNetworkMaps.input_inds(P)
-  #@show ITensors.ITensorNetworkMaps.output_inds(P)
-  #@show inds(contract(P))
-  
   return x::ITensor -> x-P(x)
 end
 
+"""
+Performs a local expansion using the two-site projected variance.
+The input state should have orthogonality center on a single vertex (region), and phi0 is that site_tensors.
+Expansion is performed on vertex that would be visited next (if next vertex is a neighbor of region). 
+"""
 function _two_site_expand_core(
-  PH, psi, phi0, region,vertexpair::Pair;
+  phi0, region,vertexpair::Pair;
+  projected_operator!,
+  state!,
   expand_dir=1,
   svd_func_expand,
   cutoff,
@@ -83,36 +82,33 @@ function _two_site_expand_core(
   use_relative_cutoff,
   use_absolute_cutoff
 ) 
-  #@show "expanding"
-  #@show vertexpair
+  # preliminaries
   theflux=flux(phi0)
   svd_func=svd_func_expand
   v1=first(vertexpair)
   v2=last(vertexpair)
-  #@show n1, n2
   verts = [v1,v2]
   n1,n2=1,2
-  #@show v1, v2
+  PH=copy(projected_operator![])
+  psi=copy(state![])
+  @show "c", keys(PH.environments)
+  # orthogonalize on the edge
+  next_edge=edgetype(psi)(vertexpair)
+  #psi,phi=extract_local_tensor(psi,next_edge) #unless we want to truncate before we expand?
   psis = map(n -> psi[n], verts)  # extract local site tensors
+  ##this block is replaced by extract_local_tensor --- unless we want to truncate here this is the cleanest.
+  ##otherwise reinsert the explicit block with truncation args (would allow to remove it from higher-level expander)
   left_inds = uniqueinds(psis[n1], psis[n2])
-
-  #@show inds(psis[n1])
-  #@show inds(psis[n2])
   U, S, V = svd(psis[n1], left_inds; lefttags=tags(commonind(psis[n1],psis[n2])), righttags=tags(commonind(psis[n1],psis[n2])))
   psis[n1]= U
+  psi[region]=U
   phi = S*V
-  ##body start
-
+  
+  # don't expand if we are already at maxdim  
   old_linkdim = dim(commonind(first(psis), phi))
-
-  PH = set_nsite(PH, 2)
-  PH = position(PH, psi, verts)
-
-  # don't expand if we are already at maxdim
-  (old_linkdim >= maxdim) && return psi, phi0, PH, false
-  #@show "expanding", maxdim-old_linkdim
   linkinds = map(psi -> commonind(psi, phi), psis)
-
+  (old_linkdim >= maxdim) && return phi0, false
+  
   # compute nullspace to the left and right 
   @timeit_debug timer "nullvector" begin
     nullVecs = map(zip(psis,linkinds)) do (psi,linkind)
@@ -120,24 +116,15 @@ function _two_site_expand_core(
       return implicit_nullspace(psi, linkind)
     end
   end
-  #@show inds(first(nullVecs))
-  #@show inds(last(nullVecs))
   
-  ## build environments
+  # update the projected operator 
+  PH = set_nsite(PH, 2)
+  PH = position(PH, psi, verts)
+  @show "b", keys(PH.environments)
+  @show "b", keys(projected_operator![].environments)
+  #@assert keys(PH.environments)!=keys(projected_operator![].environments)
+  # build environments
   g = underlying_graph(PH)
-  all_environments=ITensor[environment(PH, edge) for edge in incident_edges(PH)]
-  #envs=_get_environment_maps(PH)
-  #@show length(all_environments)
-  site_envs=[ filter(hascommoninds(PH.H[s]), all_environments) for s in sites(PH)]
-  #@show length.(site_envs)
-  #@show typeof(envs)
-  #@show envs[1]
-  #@show envs[2]
-  
-  #env1=noprime(reduce(*,site_envs[1],init=psis[1]))
-  #env2=noprime(reduce(*,site_envs[2],init=psis[2]))
-  #envs=[env1,env2]
-  
   @timeit_debug timer "build environments" begin
     envs = map(zip(verts,psis)) do (n,psi)
       return noprime(mapreduce(*, [v => n for v in neighbors(g, n) if !(v ∈ verts)]; init = psi) do e
@@ -145,42 +132,20 @@ function _two_site_expand_core(
       end *PH.H[n])
     end
   end
-  #@show PH.environments[NamedEdge((2, 1) => (3, 1))]
-  #@show inds(envs[1])
-  #@show inds(envs[2])
-  #@show inds(psis[1])
-  #@show inds(psis[2])
   
-  
-  #@show keys(PH.environments)
-  #try
-  #  @show(PH.environments[NamedEdge(vertexpair)])
-  #catch
-  #  @show(PH.environments[NamedEdge(reverse(vertexpair))])
-  #end
-  i1= inds(first(envs))
-  i2= inds(last(envs))
-  
+  # apply the projection into nullspace
   envs=[last(nullVecs)(last(envs)),first(nullVecs)(first(envs))]
-  @assert inds(first(envs))==i2
-  @assert inds(last(envs))==i1
   
-  #@show inds(phi)
-  #@show inds(last(psis))
-  #@show inds(first(psis))
-  
+  # assemble ITensorNetworkMap  #ToDo: do not rely on ITensorNetworkMap, simplify logic  
   ininds = uniqueinds(last(psis),phi)
   outinds = uniqueinds(first(psis),phi)
-  #@show v1,v2
-  #@show ininds
-  #@show outinds
   cin=combiner(ininds)
   cout=combiner(outinds)
   envs=[cin*envs[1],cout*envs[2]]
   envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap([last(envs),phi,first(envs)], uniqueinds(inds(cout),outinds), uniqueinds(inds(cin),ininds))
-  
   envMapDag = adjoint(envMap)
-
+  
+  # factorize
   @timeit_debug timer "svd_func" begin
     if svd_func==ITensorNetworks._svd_solve_normal
       U,S,V = svd_func(envMap, uniqueinds(inds(cout),outinds); maxdim=maxdim-old_linkdim, cutoff=cutoff)
@@ -188,18 +153,22 @@ function _two_site_expand_core(
       U,S,V = svd_func(eltype(first(envMap.itensors)),envMap,uniqueinds(inds(cout),outinds);theflux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
       use_absolute_cutoff=true)
       #U,S,V = svd_func(contract(envMap),uniqueinds(inds(cout),outinds);maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
-      #use_absolute_cutoff=true)
-    
+      #use_absolute_cutoff=true) #this one is for debugging in case we want to test the precontracted version
     else
       U,S,V = svd_func(eltype(envMap),envMap,envMapDag, uniqueinds(inds(cout),outinds); flux=theflux, maxdim=maxdim-old_linkdim, cutoff=cutoff)
     end
   end
-  isnothing(U) && return psi, phi0, PH, false
-  ###FIXME: somehow the svd funcs sometimes return empty ITensors instead of nothing, that should be caught in the SVD routines instead...
-  all(isempty.([U,S,V])) && return psi, phi0, PH, false
   
+  # catch cases when we decompose a map of norm==0.0
+  (isnothing(U) || iszero(norm(U))) && return phi0, false
+  #FIXME: somehow the svd funcs sometimes return empty ITensors instead of nothing, that should be caught in the SVD routines instead...
+  all(isempty.([U,S,V])) && return phi0, false #ToDo: do not rely on isempty here
+
+  # uncombine indices on the non-link-indices
   U *= dag(cout)
   V *= dag(cin)
+  
+  # direct sum the site tensors
   @timeit_debug timer "direct sum" begin
     new_psis = map(zip(psis, [U,V])) do (psi,exp_basis)
       
@@ -210,36 +179,44 @@ function _two_site_expand_core(
   end
   new_inds = [last(x)  for x in new_psis]
   new_psis = [first(x) for x in new_psis]
-  @assert sum(findmax.(dim.(new_inds))[1] .> maxdim) == 0
+  #@assert sum(findmax.(dim.(new_inds))[1] .> maxdim) == 0  #ToDo: remove debug assertions
   
+  # extract the expanded linkinds from expanded site tensors and create a zero-tensor
   phi_indices = replace(inds(phi), (commonind(phi,psis[n]) => dag(new_inds[n]) for n in 1:2)...)
   if hasqns(phi)
     new_phi=ITensor(eltype(phi),flux(phi), phi_indices...)
-    fill!(new_phi,0.0)
+    fill!(new_phi,0.0)  #ToDo: Check whether this is really necessary.
   else
     new_phi = ITensor(eltype(phi), phi_indices...)
   end
-
+  
+  # set the new bond tensor elements from the old bond tensor
   map(eachindex(phi)) do I
     v = phi[I]
-    !iszero(v) && (return new_phi[I]=v)
+    !iszero(v) && (return new_phi[I]=v) # I think this line errors without the fill! with zeros above
   end
-  ##ToDo:maybe trigger with debug flag
-  #old_twosite_tensor = first(psis)*phi*last(psis)
-
+  
+  # apply combiners on linkinds #ToDo: figure out why this is strictly necessary 
   combiners = map(new_ind -> combiner(new_ind; tags=tags(new_ind), dir=dir(new_ind)), new_inds)
   for (v,new_psi,C) in zip(verts,new_psis,combiners)
     psi[v] = noprime(new_psi*C)
   end
-
   new_phi = dag(first(combiners)) * new_phi * dag(last(combiners))
-  #
-  #if typeof(region) != NamedEdge{Int}
-  psi[v1]=psi[v1]*new_phi
+  
+  # apply expanded bond tensor to site tensor and reset projected operator to region
+  psi[v1]*=new_phi
   new_phi=psi[v1]
-  #end
-
-  return psi, new_phi, PH, true
+  @show ITensorNetworks.ortho_center(psi)
+  PH = set_nsite(PH, 1)
+  PH = position(PH, psi, [region])
+  @show PH.pos
+  @show "a", keys(PH.environments)
+  
+  projected_operator![] = PH
+  @show "a", keys(projected_operator![].environments)
+  
+  state![] = psi
+  return new_phi, true
   ##body end
 end
 
