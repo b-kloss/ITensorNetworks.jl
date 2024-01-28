@@ -87,7 +87,7 @@ function build_guess_matrix(eltype::Type{<:Number},ind,ndict::Dict;theflux=nothi
 
 end
 
-function init_guess_sizes(cind,n::Int,rule;theflux=nothing,auxdir=ITensors.in)
+function init_guess_sizes(cind,n::Int,rule;theflux=nothing,auxdir=ITensors.In)
     #@show typeof(cind)
     #@show cind
     #@show theflux
@@ -329,6 +329,8 @@ function rsvd_iterative(A::ITensor,linds::Vector{<:Index};svd_kwargs...)
     end
     n_init=1
     p_rule(n)=2*n
+    iszero(norm(AC)) && return nothing, nothing, nothing
+    #@show flux(AC)
     ndict2=init_guess_sizes(cR,n_init,p_rule;theflux=hasqns(AC) ? flux(AC) : nothing)
     ndict=init_guess_sizes(cL,n_init,p_rule;theflux=hasqns(AC) ? flux(AC) : nothing)
     ndict=merge(ndict,ndict2)
@@ -348,6 +350,9 @@ function rsvd_iterative(A::ITensor,linds::Vector{<:Index};svd_kwargs...)
     end
     vals=diag(array(new_fact.S))
     (length(vals) == 1 && vals[1]^2 ≤ get(svd_kwargs,:cutoff,0.0)) && return nothing,nothing,nothing
+    #@show flux(dag(CL)*Q*new_fact.U)
+    #@show flux(new_fact.S)
+    @assert flux(new_fact.S)==flux(AC)
     return dag(CL)*Q*new_fact.U, new_fact.S, new_fact.V*dag(CR)
     #ToDo?: handle non-QN case separately because there it is advisable to start with n_init closer to target maxdim_expand
     ##not really an issue anymore since we do *2 increase, so only log number of calls
@@ -372,6 +377,7 @@ end
 
 function rsvd_core(AC::ITensor,M;svd_kwargs...)
     Q=AC*M
+    #@show dims(Q)
     Q=ITensors.qr(Q,commoninds(AC,Q))[1]
     QAC=dag(Q)*AC
     fact=svd(QAC,uniqueind(QAC,AC);svd_kwargs...)
@@ -385,6 +391,9 @@ function rsvd_core(AC::ITensors.ITensorNetworkMaps.ITensorNetworkMap,M;svd_kwarg
     Q=ITensors.qr(Q,ITensors.ITensorNetworkMaps.input_inds(AC))[1]
     QAC=AC*dag(Q)
     @assert typeof(QAC)<:ITensor
+    #@show inds(QAC)
+    #@assert !iszero(norm(QAC))
+    
     fact=svd(QAC,uniqueind(inds(Q),ITensors.ITensorNetworkMaps.input_inds(AC));svd_kwargs...)
     return fact,Q
 end
