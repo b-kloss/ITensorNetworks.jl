@@ -15,7 +15,7 @@ using Dictionaries
 function rung_decoupl_heisenberg(N; J1=1.0, J2=0.5)
   H = OpSum()
 
-  for e1 in 1:N-2
+  for e1 in 1:(N - 2)
     e2 = e1 + 2
 
     J = iseven(e1) ? J1 : J2
@@ -28,23 +28,23 @@ function rung_decoupl_heisenberg(N; J1=1.0, J2=0.5)
 end
 
 ## rung decoupled heisenberg chain model ##
-function isinglin(N; J=-1., g=-1.)
+function isinglin(N; J=-1.0, g=-1.0)
   H = OpSum()
-  for e1 in 1:N-1
+  for e1 in 1:(N - 1)
     e2 = e1 + 1
 
-    H += J , "Z", e1, "Z", e2
+    H += J, "Z", e1, "Z", e2
   end
   for e in 1:N
-    H += g , "X", e
+    H += g, "X", e
   end
   return H
 end
 
-  ## heisenberg chain model ##
-function heisenberglin(N; J=1.)
+## heisenberg chain model ##
+function heisenberglin(N; J=1.0)
   H = OpSum()
-  for e1 in 1:(N-1)
+  for e1 in 1:(N - 1)
     e2 = e1 + 1
 
     H += J / 2, "S+", e1, "S-", e2
@@ -56,23 +56,23 @@ end
 
 let
   Random.seed!(1234)
-  tmax = 20.
+  tmax = 20.0
   dt = 0.1
   N = 10
-  J = -1.
-  g = -1.
+  J = -1.0
+  g = -1.0
   tau = 0.1
   D = 128
 
   # g = named_binary_tree(3)
   # g = named_grid((12,1))
-  do_tree=false
+  do_tree = false
   # with QNs
   if do_tree
     tooth_lengths = fill(6, 8)
     c = named_comb_tree(tooth_lengths)
     s = siteinds("S=1/2", c; conserve_qns=true)
-    
+
     d = Dict()
     for (i, v) in enumerate(vertices(s))
       d[v] = isodd(i) ? "Up" : "Dn"
@@ -82,12 +82,16 @@ let
     model = ITensorNetworks.heisenberg(s)
     H = TTN(model, s)
   else
-    s = siteinds("S=1/2",N; conserve_qns=true)
-    ψ = random_mps(s; states=(x->["Up","Up","Up","Dn","Up","Dn","Up","Dn","Up","Up"][x]), internal_inds_space=1)
-    model=heisenberglin(N)
+    s = siteinds("S=1/2", N; conserve_qns=true)
+    ψ = random_mps(
+      s;
+      states=(x -> ["Up", "Up", "Up", "Dn", "Up", "Dn", "Up", "Dn", "Up", "Up"][x]),
+      internal_inds_space=1,
+    )
+    model = heisenberglin(N)
     H = mpo(model, s)
   end
-    #@show s
+  #@show s
   # without Qns
   #g = chain_lattice_graph(N)
   #s = siteinds("S=1/2", g)
@@ -127,12 +131,19 @@ let
   # ϕ3 = dmrg_x(H, ψ; dmrg_x_kwargs..., expand = false)
 
   ################### TDVP #################
-  tdvp_cutoff=1e-14
-  tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=tdvp_cutoff, outputlevel=1,
-  updater_kwargs=(;expand_kwargs=(;cutoff=tdvp_cutoff/dt),exponentiate_kwargs=(;)))
+  tdvp_cutoff = 1e-14
+  tdvp_kwargs = (
+    time_step=-im * dt,
+    reverse_step=true,
+    normalize=true,
+    maxdim=D,
+    cutoff=tdvp_cutoff,
+    outputlevel=1,
+    updater_kwargs=(; expand_kwargs=(; cutoff=tdvp_cutoff / dt), exponentiate_kwargs=(;)),
+  )
   #tdvp_kwargs = (time_step = -im*dt, reverse_step=true, normalize=true, maxdim=D, cutoff=tdvp_cutoff, outputlevel=1,
   #updater_kwargs=(;))
-  
+
   @show tdvp_kwargs
   println("================================================================")
 
@@ -184,19 +195,25 @@ let
 
   println("================================================================")
 
-  expander_cache=Any[]
-  ϕ5 = tdvp(ITensorNetworks.local_expand_and_exponentiate_updater,H, -im*tmax, ψ;  nsites=1, tdvp_kwargs..., 
-  #ϕ5 = tdvp(H, -im*tmax, ψ;  nsites=2, tdvp_kwargs...,
-  #expander=ITensorNetworks._two_site_expand_core, 
-            #step_expander=ITensorNetworks._full_expand_core_vertex, 
-            
-            #maxdim_expand=60,
-            #svd_func=ITensorNetworks._svd_solve_normal,
-           
-            #expander_cache=expander_cache,
-            #(sweep_observer!)=obs5,
-       )
- # @show obs5
+  expander_cache = Any[]
+  ϕ5 = tdvp(
+    ITensorNetworks.local_expand_and_exponentiate_updater,
+    H,
+    -im * tmax,
+    ψ;
+    nsites=1,
+    tdvp_kwargs...,
+    #ϕ5 = tdvp(H, -im*tmax, ψ;  nsites=2, tdvp_kwargs...,
+    #expander=ITensorNetworks._two_site_expand_core, 
+    #step_expander=ITensorNetworks._full_expand_core_vertex, 
+
+    #maxdim_expand=60,
+    #svd_func=ITensorNetworks._svd_solve_normal,
+
+    #expander_cache=expander_cache,
+    #(sweep_observer!)=obs5,
+  )
+  # @show obs5
   #savedata(name_obs5, obs5)
 
 end

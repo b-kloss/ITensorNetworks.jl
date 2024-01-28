@@ -465,9 +465,9 @@ end
     tooth_lengths = fill(2, 3)
     root_vertex = (3, 2)
     c = named_comb_tree(tooth_lengths)
-    s = siteinds("S=1/2", c,conserve_qns=use_qns)
+    s = siteinds("S=1/2", c; conserve_qns=use_qns)
 
-    os = ITensorNetworks.heisenberg(c,J1=0.8,J2=0.5)
+    os = ITensorNetworks.heisenberg(c; J1=0.8, J2=0.5)
     H = TTN(os, s)
     HM = contract(H)
 
@@ -479,19 +479,17 @@ end
     Sz_tdvp = Float64[]
     Sz_tdvper = Float64[]
     Sz_tdvpef = Float64[]
-    
-    
+
     Sz_exact = Float64[]
 
     c = (2, 1)
     Szc = op("Sz", s[c])
 
     Nsteps = Int(ttotal / tau)
-    statef=copy(state)
-    statefer=copy(state)
-    statefef=copy(state)
-    
-    
+    statef = copy(state)
+    statefer = copy(state)
+    statefef = copy(state)
+
     for step in 1:Nsteps
       statex = noprime(Ut * statex)
       statex /= norm(statex)
@@ -515,8 +513,8 @@ end
         cutoff,
         normalize=false,
         updater_kwargs=(;
-        expand_kwargs=(;svd_func_expand=ITensorNetworks.rsvd_iterative),
-        exponentiate_kwargs=(;tol=1e-12, maxiter=500, krylovdim=25)
+          expand_kwargs=(; svd_func_expand=ITensorNetworks.rsvd_iterative),
+          exponentiate_kwargs=(; tol=1e-12, maxiter=500, krylovdim=25),
         ),
       )
 
@@ -530,25 +528,22 @@ end
         cutoff=1e-14,
         normalize=false,
         updater_kwargs=(;
-        expand_kwargs=(;svd_func_expand=ITensorNetworks._svd_solve_normal),
-        exponentiate_kwargs=(;tol=1e-12, maxiter=500, krylovdim=25)
+          expand_kwargs=(; svd_func_expand=ITensorNetworks._svd_solve_normal),
+          exponentiate_kwargs=(; tol=1e-12, maxiter=500, krylovdim=25),
         ),
       )
 
-
-      
       push!(Sz_tdvp, real(expect("Sz", statef)[c]))
       push!(Sz_exact, real(scalar(dag(prime(statex, s[c])) * Szc * statex)))
       push!(Sz_tdvper, real(expect("Sz", statefer)[c]))
       push!(Sz_tdvpef, real(expect("Sz", statefef)[c]))
-      
-      F = abs(scalar(dag(statex) * contract(statef)))
 
+      F = abs(scalar(dag(statex) * contract(statef)))
     end
     @show maximum(Sz_tdvpef - Sz_exact)
     @show maximum(Sz_tdvper - Sz_exact)
     @show maximum(Sz_tdvp - Sz_exact)
-    
+
     @test norm(Sz_tdvpef - Sz_exact) < 1e-3
     @test norm(Sz_tdvper - Sz_exact) < 1e-3
     @test norm(Sz_tdvp - Sz_exact) < 1e-3

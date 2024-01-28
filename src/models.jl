@@ -130,7 +130,6 @@ t-tp tight-binding model on a chain of length N
 """
 tight_binding(N::Integer; kwargs...) = tight_binding(grid((N,)); kwargs...)
 
-
 """
 Random field J1-J2 Heisenberg model on a chain of length N
 """

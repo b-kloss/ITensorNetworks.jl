@@ -1,28 +1,28 @@
 # util function to save data in obs
 function savedata(name::String, obs)
-  name == "" && return
-  h5open(name*".h5", "w") do file    
+  name == "" && return nothing
+  h5open(name * ".h5", "w") do file
     # iterate through the fields of obs and append the data to the dataframe
     for n in names(obs)
       create_group(file, n)
-      for (i,data) in enumerate(obs[:,n])
+      for (i, data) in enumerate(obs[:, n])
         file[n][string(i)] = [data[i] for i in 1:length(data)]
       end
-    end 
+    end
   end
 end
 
 function MPS(state::TTN)
-    if !is_path_graph(siteinds(state))
-        error("Trying to convert to MPS although TTN is not a path graph. Exiting.")
-    end
-    orts=ortho_center(state)
-    sort!(orts)
-    ortrange=first(orts):last(orts)
-    
-    statemps=ITensors.MPS([state[i] for i in 1:nv(state)])
-    ITensors.set_ortho_lims!(statemps,ortrange)
-    return statemps
+  if !is_path_graph(siteinds(state))
+    error("Trying to convert to MPS although TTN is not a path graph. Exiting.")
+  end
+  orts = ortho_center(state)
+  sort!(orts)
+  ortrange = first(orts):last(orts)
+
+  statemps = ITensors.MPS([state[i] for i in 1:nv(state)])
+  ITensors.set_ortho_lims!(statemps, ortrange)
+  return statemps
 end
 
 # overload expect function to be more efficient for TTNs
@@ -61,7 +61,7 @@ end
 
 function return_x(; state)
   expec = expect("Sx", state)
-  return real(sum(expec)/length(expec))
+  return real(sum(expec) / length(expec))
 end
 
 function return_z(; state)
@@ -76,35 +76,41 @@ end
 
 function return_z_mean(; state)
   expec = expect("Sz", state)
-  return real(sum(expec)/length(expec))
+  return real(sum(expec) / length(expec))
 end
 
 function return_z_half(; state)
-  half_len = floor(Int, length(vertices(state))/2)
+  half_len = floor(Int, length(vertices(state)) / 2)
   expec = expect("Sz", state; vertices=half_len)
-  return real(sum(expec)/length(expec))
+  return real(sum(expec) / length(expec))
 end
 
 function return_en(; state, PH)
   H = PH.H
-  return real(inner(state', H, state) / inner(state, state))  
+  return real(inner(state', H, state) / inner(state, state))
 end
 
 function return_state(; state, end_of_sweep)
   if end_of_sweep
-      return state
+    return state
   end
   return nothing
 end
 
 function return_entropy(; state)
-  pos = floor(Int, length(vertices(state))/2)
+  pos = floor(Int, length(vertices(state)) / 2)
   state_ = orthogonalize(state, pos)
-  _,S,_ = svd(state_[pos], (commonind(state_[pos-1], state_[pos]), filter(i->hastags(i, "Site"), inds(state_[pos]))))
+  _, S, _ = svd(
+    state_[pos],
+    (
+      commonind(state_[pos - 1], state_[pos]),
+      filter(i -> hastags(i, "Site"), inds(state_[pos])),
+    ),
+  )
   SvN = 0
-  for n=1:dim(S,1)
-      p = S[n,n]^2
-      SvN -= p*log(p)
+  for n in 1:dim(S, 1)
+    p = S[n, n]^2
+    SvN -= p * log(p)
   end
   return SvN
 end

@@ -10,7 +10,9 @@ function ProjTTNApply(psi0::TTN, H::TTN)
 end
 
 function copy(P::ProjTTNApply)
-  return ProjTTNApply(P.pos, copy(P.psi0), copy(P.H), NamedGraphs.copy_keys_values(P.environments))
+  return ProjTTNApply(
+    P.pos, copy(P.psi0), copy(P.H), NamedGraphs.copy_keys_values(P.environments)
+  )
 end
 
 function set_nsite(P::ProjTTNApply, nsite)
