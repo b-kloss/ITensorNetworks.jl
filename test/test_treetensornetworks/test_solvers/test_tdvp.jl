@@ -457,7 +457,7 @@ end
     @test abs(inner(ψ0, ψ2)) > 0.99
   end
 
-  @testset "Accuracy Test" begin
+  @testset "Accuracy Test" for use_qns in [true, false]
     tau = 0.025
     ttotal = 1.0
     cutoff = 1e-12
@@ -465,7 +465,7 @@ end
     tooth_lengths = fill(2, 3)
     root_vertex = (3, 2)
     c = named_comb_tree(tooth_lengths)
-    s = siteinds("S=1/2", c)
+    s = siteinds("S=1/2", c,conserve_qns=use_qns)
 
     os = ITensorNetworks.heisenberg(c,J1=0.8,J2=0.5)
     H = TTN(os, s)
@@ -512,7 +512,7 @@ end
         statefer;
         maxdim=128,
         nsites=1,
-        cutoff=1e-14,
+        cutoff,
         normalize=false,
         updater_kwargs=(;
         expand_kwargs=(;svd_func_expand=ITensorNetworks.rsvd_iterative),
@@ -537,14 +537,18 @@ end
 
 
       
-      push!(Sz_tdvp, real(expect("Sz", statef; vertices=[c])[c]))
+      push!(Sz_tdvp, real(expect("Sz", statef)[c]))
       push!(Sz_exact, real(scalar(dag(prime(statex, s[c])) * Szc * statex)))
-      push!(Sz_tdvper, real(expect("Sz", statefer; vertices=[c])[c]))
-      push!(Sz_tdvpef, real(expect("Sz", statefef; vertices=[c])[c]))
+      push!(Sz_tdvper, real(expect("Sz", statefer)[c]))
+      push!(Sz_tdvpef, real(expect("Sz", statefef)[c]))
       
       F = abs(scalar(dag(statex) * contract(statef)))
 
     end
+    @show maximum(Sz_tdvpef - Sz_exact)
+    @show maximum(Sz_tdvper - Sz_exact)
+    @show maximum(Sz_tdvp - Sz_exact)
+    
     @test norm(Sz_tdvpef - Sz_exact) < 1e-3
     @test norm(Sz_tdvper - Sz_exact) < 1e-3
     @test norm(Sz_tdvp - Sz_exact) < 1e-3
