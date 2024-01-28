@@ -349,4 +349,4 @@ function _full_expand_core_vertex(
 
   return psi, new_phi, PH
 end
-#=
+=#
