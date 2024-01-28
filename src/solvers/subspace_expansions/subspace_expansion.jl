@@ -10,9 +10,6 @@ function two_site_expansion_updater(
   updater_kwargs,
 )
   (;maxdim,cutoff,time_step) = region_kwargs
- # @show maxdim, cutoff, time_step
- # @show region_kwargs
-  
   #ToDo: handle timestep==Inf for DMRG case
   default_updater_kwargs = (;
     svd_func_expand=rsvd_iterative,
@@ -22,33 +19,22 @@ function two_site_expansion_updater(
     use_absolute_cutoff=true,
   )
   updater_kwargs = merge(default_updater_kwargs, updater_kwargs)
-  #@show updater_kwargs
+  
   # if on edge return without doing anything
   region=first(sweep_plan[which_region_update])
-  #@show region
-  #@show region, which_region_update == length(sweep_plan)
   typeof(region)<:NamedEdge && return init, (;)
   region=only(region)
   #figure out next region, since we want to expand there
   #ToDo account for non-integer indices into which_region_update
   next_region = which_region_update == length(sweep_plan) ? nothing : first(sweep_plan[which_region_update + 1]) 
-  #@show next_region
   previous_region = which_region_update == 1 ? nothing : first(sweep_plan[which_region_update - 1])
   isnothing(next_region) && return init, (;)
-  #@show region, next_region
-  #@show typeof(first(sweep_plan[which_region_update])), typeof(region), typeof(next_region), next_region
   !(typeof(next_region)<:NamedEdge) && return init, (;)
   !(region==src(next_region) || region==dst(next_region)) && return init, (;)
-  #@assert typeof(next_region)<:NamedEdge
-  #@show region, next_region, dst(next_region), src(next_region)
   next_vertex= src(next_region) == region ? dst(next_region) : src(next_region)
   vp = region=>next_vertex
-  #dereference and copy # ToDo pass the references into two_site_expand_core 
-  #PH=copy(projected_operator![])
-  #state=copy(state![])
+  
   phi, has_changed = _two_site_expand_core(init,region,vp;projected_operator!,state!,  expand_dir=1, updater_kwargs...)
-  @show has_changed, keys(projected_operator![].environments)
-  #rereference, regardless of outcome
   !has_changed && return init, (;)
   return phi, (;)
 end
@@ -91,18 +77,18 @@ function _two_site_expand_core(
   n1,n2=1,2
   PH=copy(projected_operator![])
   psi=copy(state![])
-  @show "c", keys(PH.environments)
   # orthogonalize on the edge
   next_edge=edgetype(psi)(vertexpair)
-  #psi,phi=extract_local_tensor(psi,next_edge) #unless we want to truncate before we expand?
+  psi,phi=extract_local_tensor(psi,next_edge) 
   psis = map(n -> psi[n], verts)  # extract local site tensors
+  # ToDo: remove following code lines unless we want to truncate before we expand?
   ##this block is replaced by extract_local_tensor --- unless we want to truncate here this is the cleanest.
   ##otherwise reinsert the explicit block with truncation args (would allow to remove it from higher-level expander)
-  left_inds = uniqueinds(psis[n1], psis[n2])
-  U, S, V = svd(psis[n1], left_inds; lefttags=tags(commonind(psis[n1],psis[n2])), righttags=tags(commonind(psis[n1],psis[n2])))
-  psis[n1]= U
-  psi[region]=U
-  phi = S*V
+  #left_inds = uniqueinds(psis[n1], psis[n2])
+  #U, S, V = svd(psis[n1], left_inds; lefttags=tags(commonind(psis[n1],psis[n2])), righttags=tags(commonind(psis[n1],psis[n2])))
+  #psis[n1]= U
+  #psi[region]=U
+  #phi = S*V
   
   # don't expand if we are already at maxdim  
   old_linkdim = dim(commonind(first(psis), phi))
@@ -120,9 +106,7 @@ function _two_site_expand_core(
   # update the projected operator 
   PH = set_nsite(PH, 2)
   PH = position(PH, psi, verts)
-  @show "b", keys(PH.environments)
-  @show "b", keys(projected_operator![].environments)
-  #@assert keys(PH.environments)!=keys(projected_operator![].environments)
+
   # build environments
   g = underlying_graph(PH)
   @timeit_debug timer "build environments" begin
@@ -179,7 +163,6 @@ function _two_site_expand_core(
   end
   new_inds = [last(x)  for x in new_psis]
   new_psis = [first(x) for x in new_psis]
-  #@assert sum(findmax.(dim.(new_inds))[1] .> maxdim) == 0  #ToDo: remove debug assertions
   
   # extract the expanded linkinds from expanded site tensors and create a zero-tensor
   phi_indices = replace(inds(phi), (commonind(phi,psis[n]) => dag(new_inds[n]) for n in 1:2)...)
@@ -206,15 +189,10 @@ function _two_site_expand_core(
   # apply expanded bond tensor to site tensor and reset projected operator to region
   psi[v1]*=new_phi
   new_phi=psi[v1]
-  @show ITensorNetworks.ortho_center(psi)
   PH = set_nsite(PH, 1)
   PH = position(PH, psi, [region])
-  @show PH.pos
-  @show "a", keys(PH.environments)
   
   projected_operator![] = PH
-  @show "a", keys(projected_operator![].environments)
-  
   state![] = psi
   return new_phi, true
   ##body end
