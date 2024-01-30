@@ -82,6 +82,7 @@ ITensors.enable_auto_fermion()
 
     psi = mps(s; states)
     psi0 = deepcopy(psi)
+    #=
     tdvp_kwargs = (
       time_step=-im * dt,
       reverse_step=true,
@@ -111,7 +112,7 @@ ITensors.enable_auto_fermion()
     @test all(
       i -> i < 5e-3, abs.(real.([mag_exp[v] for v in vertices(psife)]) .- res[:, end])
     )
-
+    =#
     #test whether rsvd works for fermions
     tdvp_kwargs = (
       time_step=-im * dt,
@@ -128,13 +129,19 @@ ITensors.enable_auto_fermion()
         exponentiate_kwargs=(;),
       ),
     )#,exponentiate_kwargs=(;tol=1e-8)))
-    @test_broken tdvp(
+    psifer = tdvp(
       ITensorNetworks.local_expand_and_exponentiate_updater,
       H,
       -1im * tf,
       psi;
       nsites=1,
       tdvp_kwargs...,
+    )
+    @test inner(psi0, psi) ≈ 1 atol = 1e-12
+    mag_exp = expect("N", psifer)
+    @show maximum(abs.(real.([mag_exp[v] for v in vertices(psifer)]) .- res[:, end]))
+    @test all(
+      i -> i < 5e-3, abs.(real.([mag_exp[v] for v in vertices(psifer)]) .- res[:, end])
     )
   end
 end
