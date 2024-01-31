@@ -1,22 +1,24 @@
-function get_qn_dict(ind, theflux; auxdir=dir(ind)) ##ToDo: remove
-    ###should work right away for multiple QNs, no need to refactor
-    @assert hasqns(ind)
-    thedir = dir(ind)
-    translator = Dict{QN,QN}()
-    for s in space(ind)
-      qn = first(s)
-      translator[qn] = qn# (-auxdir) * ((-thedir) * qn + theflux)
-    end
-    return translator
+function get_column_space(A::Vector{<:ITensor}, lc::Index,rc::Index)
+  #gets non-zero blocks in rc by sticking in lc and contracting through
+  viable_sectors=Vector{Pair{QN,Int64}}
+  for s in space(lc)
+    qn = first(s)
+    trial=randomITensor(flux(dag(qn)),lc)
+    adtrial=foldl(A;init=trial)
+    nnzblocks(adtrial)==0 && continue
+    thesector=only(space(only(inds(adtrial)))) 
+    push!(viable_sectors, thesector)
+  end
+  return viable_sectors
 end
 
 
 function build_guess_matrix(
-    eltype::Type{<:Number}, ind, n::Int, p::Int; theflux=nothing, auxdir=dir(ind)
-)
+    eltype::Type{<:Number}, ind, sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, n::Int, p::Int
+    )
     if hasqns(ind)
         aux_spaces = Pair{QN,Int64}[]
-        for s in space(ind)
+        for s in sectors
             thedim = last(s)
             qn = first(s)
             en = min(n + p, thedim)
@@ -25,7 +27,7 @@ function build_guess_matrix(
         aux_ind = Index(aux_spaces; dir=dir(ind))
         try
             M = randomITensor(eltype, dag(ind), aux_ind)    #defaults to zero flux
-            @show theflux, flux(M)
+           # @show theflux, flux(M)
         catch e
             @show e
             @show aux_ind
@@ -59,13 +61,13 @@ function qns(b::Block{n}, t::ITensor) where {n}
 end
 
 function build_guess_matrix(
-  eltype::Type{<:Number}, ind, ndict::Dict; theflux=nothing, auxdir=dir(ind)
+  eltype::Type{<:Number}, ind,  sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, ndict::Dict; theflux=nothing, auxdir=dir(ind)
 )
   if hasqns(ind)
     #translate_qns = get_qn_dict(ind, theflux; auxdir)
     aux_spaces = Pair{QN,Int64}[]
     #@show first.(space(ind))
-    for s in space(ind)
+    for s in sectors
       thedim = last(s)
       qn = first(s)
       en = min(ndict[qn], thedim)
@@ -92,19 +94,16 @@ function build_guess_matrix(
   return M
 end
 
-function init_guess_sizes(cind, n::Int, rule; theflux=nothing, auxdir=dir(cind))
-  #@show typeof(cind)
-  #@show cind
-  #@show theflux
+function init_guess_sizes(cind, sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, n::Int, rule; theflux=nothing, auxdir=dir(cind))
   if hasqns(cind)
-    #translate_qns = get_qn_dict(cind, theflux)
     ndict = Dict{QN,Int64}()
-    for s in space(cind)
+    for s in sectors
       thedim = last(s)
       qn = first(s)
       ndict[qn] = min(rule(n), thedim)
     end
   else
+    @assert sectors==nothing
     thedim = dim(cind)
     ndict = Dict{Int64,Int64}()
     ndict[thedim] = min(thedim, rule(n))
