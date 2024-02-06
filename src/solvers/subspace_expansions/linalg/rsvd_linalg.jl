@@ -41,13 +41,13 @@ function rsvd_iterative(
     else
       ndict = ndict2
     end
-    M = build_guess_matrix(T, cR, ndict; theflux=theflux)
+    M = build_guess_matrix(T, cR, ndict)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
     n_inc = 2
     ndict = increment_guess_sizes(ndict, n_inc, p_rule)
     new_fact = deepcopy(fact)
     while true
-      M = build_guess_matrix(T, cR, ndict; theflux=theflux)
+      M = build_guess_matrix(T, cR, ndict)
       new_fact, Q = rsvd_core(AC, M; svd_kwargs...)
       if is_converged!(ndict, fact, new_fact; n_inc, has_qns=hasqns(ininds), svd_kwargs...)
         break
@@ -75,16 +75,17 @@ function rsvd_iterative(
     p_rule(n) = 2 * n
     iszero(norm(AC)) && return nothing, nothing, nothing
     #@show flux(AC)
-    ndict2 = init_guess_sizes(cR, n_init, p_rule; theflux=hasqns(AC) ? flux(AC) : nothing)
-    ndict = init_guess_sizes(cL, n_init, p_rule; theflux=hasqns(AC) ? flux(AC) : nothing)
-    ndict = merge(ndict, ndict2)
-    M = build_guess_matrix(eltype(AC), cR, ndict; theflux=hasqns(AC) ? flux(AC) : nothing)
+    nonzero_sectors=get_column_space(AC,cL,cR)
+    ndict = init_guess_sizes(cR, nonzero_sectors, n_init, p_rule; theflux=hasqns(AC) ? flux(AC) : nothing)
+    #ndict = init_guess_sizes(cL, n_init, p_rule; theflux=hasqns(AC) ? flux(AC) : nothing)
+    #ndict = merge(ndict, ndict2)
+    M = build_guess_matrix(eltype(AC), cR, nonzero_sectors, ndict)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
     n_inc = 1
     ndict = increment_guess_sizes(ndict, n_inc, p_rule)
     new_fact = deepcopy(fact)
     while true
-      M = build_guess_matrix(eltype(AC), cR, ndict; theflux=hasqns(AC) ? flux(AC) : nothing)
+      M = build_guess_matrix(eltype(AC), cR, nonzero_sectors, ndict)
       new_fact, Q = rsvd_core(AC, M; svd_kwargs...)
       if is_converged!(ndict, fact, new_fact; n_inc, has_qns=hasqns(AC), svd_kwargs...)
         break
@@ -123,22 +124,16 @@ function rsvd_iterative(
     p_rule(n) = 2 * n
     iszero(norm(AC)) && return nothing, nothing, nothing
     #@show flux(AC)
-    ndict2 = init_guess_sizes(cR, n_init, p_rule; theflux)
-    #@assert isempty(setdiff(keys(Dict(space(cR))), keys(ndict2)))
-    ndict = init_guess_sizes(cL, n_init, p_rule; theflux)
-    #FIXME: merging is not the right thing to do, but is a workaround due to the way is_converged! is implemented
-    ndict = merge(ndict, ndict2)    
-    #@show keys(ndict), keys(Dict(space(cR)))
-    #@assert isempty(setdiff(keys(Dict(space(cR))), keys(ndict)))
-    #@assert isempty(setdiff(keys(ndict),keys(Dict(space(cR)))))
+    nonzero_sectors=get_column_space(AC,cL,cR)
+    ndict = init_guess_sizes(cR, nonzero_sectors, n_init, p_rule; theflux)
     
-    M = build_guess_matrix(eltype(first(AC)), cR, ndict; theflux)
+    M = build_guess_matrix(eltype(first(AC)), cR, nonzero_sectors, ndict)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
     n_inc = 1
     ndict = increment_guess_sizes(ndict, n_inc, p_rule)
     new_fact = deepcopy(fact)
     while true
-      M = build_guess_matrix(eltype(first(AC)), cR, ndict; theflux)
+      M = build_guess_matrix(eltype(first(AC)), cR, nonzero_sectors, ndict)
       new_fact, Q = rsvd_core(AC, M; svd_kwargs...)
       isnothing(Q) && return nothing,nothing,nothing
       if is_converged!(ndict, fact, new_fact; n_inc, has_qns=any(hasqns.(AC)), svd_kwargs...)
@@ -180,7 +175,8 @@ function rsvd_iterative(
     if inds(AC) != (cL, cR)
       AC = permute(AC, cL, cR)
     end
-    M = build_guess_matrix(eltype(AC), cR, n, p; theflux=hasqns(AC) ? flux(AC) : nothing)
+    nonzero_sectors=get_column_space(AC,cL,cR)
+    M = build_guess_matrix(eltype(AC), cR,nonzero_sectors, n, p)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
     return dag(CL) * Q * fact.U, fact.S, fact.V * dag(CR)
   end
@@ -203,9 +199,9 @@ function rsvd_iterative(
     
     cL = combinedind(CL)
     cR = combinedind(CR)
-    theflux = any(hasqns.(AC)) ? reduce(+,flux.(AC)) : nothing
-    #theflux = mapreduce(flux,+,AC)   
-    M = build_guess_matrix(eltype(first(AC)), cR, n, p; theflux)
+    #theflux = mapreduce(flux,+,AC)
+    nonzero_sectors=get_column_space(AC,cL,cR)
+    M = build_guess_matrix(eltype(first(AC)), cR,nonzero_sectors, n, p)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
     return dag(CL) * Q * fact.U, fact.S, fact.V * dag(CR)
   end

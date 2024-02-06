@@ -1,16 +1,33 @@
 function get_column_space(A::Vector{<:ITensor}, lc::Index,rc::Index)
   #gets non-zero blocks in rc by sticking in lc and contracting through
-  viable_sectors=Vector{Pair{QN,Int64}}
+  viable_sectors=Vector{Pair{QN,Int64}}()
   for s in space(lc)
     qn = first(s)
-    trial=randomITensor(flux(dag(qn)),lc)
-    adtrial=foldl(A;init=trial)
+    trial=dag(randomITensor(qn,lc))
+    adtrial=foldl(*,A;init=trial)
     nnzblocks(adtrial)==0 && continue
-    thesector=only(space(only(inds(adtrial)))) 
+    @assert nnzblocks(adtrial)==1
+    i = Int(nzblocks(adtrial)[1])
+    thesector=space(only(inds(adtrial)))[i]
     push!(viable_sectors, thesector)
   end
   return viable_sectors
 end
+
+function get_column_space(A::ITensor, lc::Index,rc::Index)
+  #gets non-zero blocks in rc by sticking in lc and contracting through
+  viable_sectors=Vector{Pair{QN,Int64}}()
+  ind_loc=only(findall(isequal(rc),inds(A)))
+  unique_qns=unique(qns(A,ind_loc))
+  for s in space(rc)
+    qn = first(s)
+    qn in unique_qns || continue 
+    push!(viable_sectors, s)
+  end
+  return viable_sectors
+end
+
+
 
 
 function build_guess_matrix(
@@ -45,10 +62,18 @@ function build_guess_matrix(
     #@show M
     return M
 end
+
 qns(t::ITensor) = qns(collect(eachnzblock(t)), t)
+qns(t::ITensor, i::Int) = qns(collect(eachnzblock(t)), t, i)
+
 function qns(bs::Vector{Block{n}}, t::ITensor) where {n}
   return [qns(b, t) for b in bs]
 end
+
+function qns(bs::Vector{Block{n}}, t::ITensor,i::Int) where {n}
+  return [qns(b, t)[i] for b in bs]
+end
+
 
 function qns(b::Block{n}, t::ITensor) where {n}
   theqns = QN[]
@@ -61,8 +86,7 @@ function qns(b::Block{n}, t::ITensor) where {n}
 end
 
 function build_guess_matrix(
-  eltype::Type{<:Number}, ind,  sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, ndict::Dict; theflux=nothing, auxdir=dir(ind)
-)
+  eltype::Type{<:Number}, ind,  sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, ndict::Dict;) ##given ndict, sectors is not necessary here
   if hasqns(ind)
     #translate_qns = get_qn_dict(ind, theflux; auxdir)
     aux_spaces = Pair{QN,Int64}[]
@@ -180,6 +204,7 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
   end
 
   maxdim = get(svd_kwargs, :maxdim, Inf)
+  ##deal with non QN tensors first
   os = sort(storage(oS); rev=true)
   ns = sort(storage(nS); rev=true)
   if length(os) >= maxdim && length(ns) >= maxdim
@@ -198,38 +223,60 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
     return conv_global
   end
   conv_bool_total = true
+  ##deal with QN tensors second
   ##a lot of this would be more convenient with ITensor internal_inds_space
   ##ToDo: refactor, but not entirely trivial because functionality is implemented on the level of QNIndex, not a set of QNIndices
   ##e.g. it is cumbersome to query the collection of QNs associated with a Block{n} of an ITensor with n>1
-  soS = space(inds(oS)[1])
-  snS = space(inds(nS)[1])
-  qns = union(ITensors.qn.(soS), ITensors.qn.(snS))
-
-  oblocks = eachnzblock(oS)
-  oblockdict = Int.(getindex.(oblocks, 1))
-  oqnindtoblock = Dict(collect(values(oblockdict)) .=> collect(keys(oblockdict)))
-
-  nblocks = eachnzblock(nS)
-  nblockdict = Int.(getindex.(nblocks, 1))
-  nqnindtoblock = Dict(collect(values(nblockdict)) .=> collect(keys(nblockdict)))
-
-  for qn in qns
-    if qn in ITensors.qn.(snS) && qn in ITensors.qn.(soS)
-      oqnind = findfirst((first.(soS)) .== [qn])
-      nqnind = findfirst((first.(snS)) .== (qn,))
-      oblock = oqnindtoblock[oqnind]
-      nblock = nqnindtoblock[nqnind]
-      #oblock=ITensors.block(first,inds(oS)[1],qn)
-      #nblock=ITensors.block(first,inds(nS)[1],qn)
-
-      #make sure blocks are the same QN when we compare them
-      #@assert first(soS[oqnind])==first(snS[nqnind])#
-      ovals = diag(oS[oblock])
-      nvals = diag(nS[nblock])
-      conv_bool = is_converged_block(collect(ovals), collect(nvals); svd_kwargs...)
-    else
-      conv_bool = false
+  
+  oU,oV = old_fact.U, old_fact.V
+  nU,nV = new_fact.U, new_fact.V
+  nrind=uniqueind(nV,nS)
+  orind=uniqueind(oV,oS)
+  
+  ncrind=commonind(nS,nV)
+  ocrind=commonind(nS,nV)
+  
+  nqns=first.(space(nrind))
+  oqns=first.(space(nrind))
+  for qn in keys(ndict)
+    if !(qn in nqns) &&  !(qn in oqns)
+      conv_bool=true
+      continue
+    #qn
+    elseif !(qn in nqns)
+      ndict[qn] *= 2
+      conv_bool_total = false
+      warn("QN was in old factorization but not in new one, this shouldn't happen often!")
+      continue
+    elseif !(qn in oqns)
+      ndict[qn] *= 2
+      conv_bool_total = false
+      continue
     end
+    #qn present in both old and new factorization, grab singular values to compare
+    #since U and V are isometries, we can look for the same QN in the central index
+    soS=space(ocrind)
+    snS=space(ocrind)
+    
+  #soS = space(inds(oS)[1])
+  #snS = space(inds(nS)[1])
+  #qns = union(ITensors.qn.(soS), ITensors.qn.(snS))
+
+    oblocks = eachnzblock(oS)
+    oblockdict = Int.(getindex.(oblocks, 1))
+    oqnindtoblock = Dict(collect(values(oblockdict)) .=> collect(keys(oblockdict)))
+
+    nblocks = eachnzblock(nS)
+    nblockdict = Int.(getindex.(nblocks, 1))
+    nqnindtoblock = Dict(collect(values(nblockdict)) .=> collect(keys(nblockdict)))
+
+    oqnind = findfirst((first.(soS)) .== [qn])
+    nqnind = findfirst((first.(snS)) .== (qn,))
+    oblock = oqnindtoblock[oqnind]
+    nblock = nqnindtoblock[nqnind]
+    ovals = diag(oS[oblock])
+    nvals = diag(nS[nblock])
+    conv_bool = is_converged_block(collect(ovals), collect(nvals); svd_kwargs...)
     if conv_bool == false
       ndict[qn] *= 2
     end
