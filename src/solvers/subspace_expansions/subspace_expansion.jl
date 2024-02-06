@@ -124,8 +124,8 @@ function _two_site_expand_core(
     envs = map(zip(verts, psis)) do (n, psi)
       return noprime(
         mapreduce(*, [v => n for v in neighbors(g, n) if !(v ∈ verts)]; init=psi) do e
-          return PH.environments[NamedEdge(e)]
-        end * PH.H[n],
+          return environments(PH)[NamedEdge(e)]
+        end * operator(PH)[n],
       )
     end
   end

@@ -1,67 +1,4 @@
-function rsvd_iterative(
-    T,
-    A::ITensors.ITensorNetworkMaps.ITensorNetworkMap,
-    linds::Vector{<:Index};
-    theflux=nothing,
-    svd_kwargs...,
-  )
-  
-    #translate from in/out to l/r logic
-    ininds = ITensors.ITensorNetworkMaps.input_inds(A)
-    outinds = ITensors.ITensorNetworkMaps.output_inds(A)
-    @assert linds == ininds  ##FIXME: this is specific to the way we wrote the subspace expansion, should be fixed in another iteration
-    rinds = outinds
-  
-    CL = combiner(linds...)
-    CR = combiner(rinds...)
-    cL = uniqueind(inds(CL), linds)
-    cR = uniqueind(inds(CR), rinds)
-  
-    l = CL * A.itensors[1]
-    r = A.itensors[end] * CR
-  
-    if length(A.itensors) !== 2
-      AC = ITensors.ITensorNetworkMaps.ITensorNetworkMap(
-        [l, A.itensors[2:(length(A.itensors) - 1)]..., r],
-        commoninds(l, CL),
-        commoninds(r, CR),
-      )
-    else
-      AC = ITensors.ITensorNetworkMaps.ITensorNetworkMap(
-        [l, r], commoninds(l, CL), commoninds(r, CR)
-      )
-    end
-    ###this initializer part is still a bit ugly
-    n_init = 1
-    p_rule(n) = 2 * n
-    ndict2 = init_guess_sizes(cR, n_init, p_rule; theflux=theflux)
-    ndict = init_guess_sizes(cL, n_init, p_rule; theflux=theflux)
-    if hasqns(ininds)
-      ndict = merge(ndict, ndict2)
-    else
-      ndict = ndict2
-    end
-    M = build_guess_matrix(T, cR, ndict)
-    fact, Q = rsvd_core(AC, M; svd_kwargs...)
-    n_inc = 2
-    ndict = increment_guess_sizes(ndict, n_inc, p_rule)
-    new_fact = deepcopy(fact)
-    while true
-      M = build_guess_matrix(T, cR, ndict)
-      new_fact, Q = rsvd_core(AC, M; svd_kwargs...)
-      if is_converged!(ndict, fact, new_fact; n_inc, has_qns=hasqns(ininds), svd_kwargs...)
-        break
-      else
-        fact = new_fact
-      end
-    end
-    vals = diag(array(new_fact.S))
-    (length(vals) == 1 && vals[1]^2 ≤ get(svd_kwargs, :cutoff, 0.0)) &&
-      return nothing, nothing, nothing
-    return dag(CL) * Q * new_fact.U, new_fact.S, new_fact.V * dag(CR)
-  end
-  
-  function rsvd_iterative(A::ITensor, linds::Vector{<:Index}; svd_kwargs...)
+function rsvd_iterative(A::ITensor, linds::Vector{<:Index}; svd_kwargs...)
     rinds = uniqueinds(A, linds)
     CL = combiner(linds)
     CR = combiner(rinds)
@@ -76,6 +13,7 @@ function rsvd_iterative(
     iszero(norm(AC)) && return nothing, nothing, nothing
     #@show flux(AC)
     nonzero_sectors=get_column_space(AC,cL,cR)
+    isempty(nonzero_sectors) && return nothing,nothing,nothing
     ndict = init_guess_sizes(cR, nonzero_sectors, n_init, p_rule; theflux=hasqns(AC) ? flux(AC) : nothing)
     #ndict = init_guess_sizes(cL, n_init, p_rule; theflux=hasqns(AC) ? flux(AC) : nothing)
     #ndict = merge(ndict, ndict2)
@@ -125,6 +63,7 @@ function rsvd_iterative(
     iszero(norm(AC)) && return nothing, nothing, nothing
     #@show flux(AC)
     nonzero_sectors=get_column_space(AC,cL,cR)
+    isempty(nonzero_sectors) && return nothing,nothing,nothing
     ndict = init_guess_sizes(cR, nonzero_sectors, n_init, p_rule; theflux)
     
     M = build_guess_matrix(eltype(first(AC)), cR, nonzero_sectors, ndict)
@@ -176,6 +115,7 @@ function rsvd_iterative(
       AC = permute(AC, cL, cR)
     end
     nonzero_sectors=get_column_space(AC,cL,cR)
+    isempty(nonzero_sectors) && return nothing,nothing,nothing
     M = build_guess_matrix(eltype(AC), cR,nonzero_sectors, n, p)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
     return dag(CL) * Q * fact.U, fact.S, fact.V * dag(CR)
@@ -201,6 +141,7 @@ function rsvd_iterative(
     cR = combinedind(CR)
     #theflux = mapreduce(flux,+,AC)
     nonzero_sectors=get_column_space(AC,cL,cR)
+    isempty(nonzero_sectors) && return nothing,nothing,nothing
     M = build_guess_matrix(eltype(first(AC)), cR,nonzero_sectors, n, p)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
     return dag(CL) * Q * fact.U, fact.S, fact.V * dag(CR)

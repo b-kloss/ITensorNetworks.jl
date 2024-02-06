@@ -91,6 +91,7 @@ function build_guess_matrix(
     #translate_qns = get_qn_dict(ind, theflux; auxdir)
     aux_spaces = Pair{QN,Int64}[]
     #@show first.(space(ind))
+    #@show sectors
     for s in sectors
       thedim = last(s)
       qn = first(s)
@@ -108,6 +109,8 @@ function build_guess_matrix(
       @show ind
       error("stopping here something is wrong")
     end
+    #@show M
+    #@show M.tensor.storage
     @assert nnzblocks(M) != 0
   else
     thedim = dim(ind)
@@ -234,10 +237,10 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
   orind=uniqueind(oV,oS)
   
   ncrind=commonind(nS,nV)
-  ocrind=commonind(nS,nV)
+  ocrind=commonind(oS,oV)
   
-  nqns=first.(space(nrind))
-  oqns=first.(space(nrind))
+  nqns=first.(space(ncrind))
+  oqns=first.(space(ocrind))
   for qn in keys(ndict)
     if !(qn in nqns) &&  !(qn in oqns)
       conv_bool=true
@@ -255,8 +258,9 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
     end
     #qn present in both old and new factorization, grab singular values to compare
     #since U and V are isometries, we can look for the same QN in the central index
+    #in fact that's not how the svd returns, the outer index is full (all allowed )
     soS=space(ocrind)
-    snS=space(ocrind)
+    snS=space(ncrind)
     
   #soS = space(inds(oS)[1])
   #snS = space(inds(nS)[1])
@@ -269,9 +273,13 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
     nblocks = eachnzblock(nS)
     nblockdict = Int.(getindex.(nblocks, 1))
     nqnindtoblock = Dict(collect(values(nblockdict)) .=> collect(keys(nblockdict)))
+    #@show qn, soS, snS
+    #@show (first.(soS)) .== [qn]
+    #@show (first.(snS)) .== (qn,)
+    #@show nqns, oqns    
 
     oqnind = findfirst((first.(soS)) .== [qn])
-    nqnind = findfirst((first.(snS)) .== (qn,))
+    nqnind = findfirst((first.(snS)) .== [qn])
     oblock = oqnindtoblock[oqnind]
     nblock = nqnindtoblock[nqnind]
     ovals = diag(oS[oblock])
