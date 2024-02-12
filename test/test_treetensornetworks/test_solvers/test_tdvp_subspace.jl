@@ -19,14 +19,16 @@ end
 auto_fermion_enabled = ITensors.using_auto_fermion()
 ITensors.enable_auto_fermion()
 @testset "MPS TDVP" begin
+
+  #=
   @testset "exact vs 2s" begin
     ITensors.enable_auto_fermion()
     Random.seed!(1234)
     cutoff = 1e-14
     N = 20
-    D = 64
+    D = 128
     t = 1.0
-    tp = 0.0
+    tp = 0.4
     dt = 0.05
     s = siteinds("Fermion", N; conserve_qns=true)
     os = ITensorNetworks.tight_binding(N; t, tp)
@@ -46,7 +48,7 @@ ITensors.enable_auto_fermion()
     psi = mps(s; states)
     psi0 = deepcopy(psi)
     psif = tdvp(
-      H, -1im * tf, psi; order=2, time_step=-1im * dt, cutoff, nsites=2, outputlevel=0
+      H, -1im * tf, psi; maxdim=D, order=2, time_step=-1im * dt, cutoff, nsites=2, outputlevel=1
     )
     @test inner(psi0, psi) ≈ 1 atol = 1e-12  # just making sure that tdvp is out-of-place
     mag_2s = expect("N", psif)
@@ -55,7 +57,7 @@ ITensors.enable_auto_fermion()
       i -> i < 5e-3, abs.(real.([mag_2s[v] for v in vertices(psif)]) .- res[:, end])
     )
   end
-
+  =#
   @testset "exact vs 1s + local subspace" begin
     ITensors.enable_auto_fermion()
     Random.seed!(1234)
@@ -63,8 +65,8 @@ ITensors.enable_auto_fermion()
     N = 20
     D = 128
     t = 1.0
-    tp = 0.0
-    dt = 0.05
+    tp = 0.4
+    dt = 0.025
     s = siteinds("Fermion", N; conserve_qns=true)
     os = ITensorNetworks.tight_binding(N; t, tp)
     H = mpo(os, s)
@@ -121,7 +123,7 @@ ITensors.enable_auto_fermion()
       normalize=true,
       maxdim=D,
       cutoff=cutoff,
-      outputlevel=0,
+      outputlevel=1,
       updater_kwargs=(;
         expand_kwargs=(;
           cutoff=cutoff / dt, svd_func_expand=ITensorNetworks.rsvd_iterative

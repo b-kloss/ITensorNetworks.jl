@@ -139,12 +139,10 @@ function _two_site_expand_core(
   cin = combiner(ininds)
   cout = combiner(outinds)
   envs = [cin * envs[1], cout * envs[2]]
-  envMap=[last(envs), phi* first(envs)]
+  envMap = [last(envs), phi * first(envs)]
   #@show inds(envMap[1])
   #@show inds(envMap[2])
-  
-  
-  
+
   #envMap = ITensors.ITensorNetworkMaps.ITensorNetworkMap(
   #  [last(envs), phi, first(envs)],
   #  uniqueinds(inds(cout), outinds),
@@ -159,7 +157,6 @@ function _two_site_expand_core(
         envMap, uniqueinds(inds(cout), outinds); maxdim=maxdim - old_linkdim, cutoff=cutoff
       )
     elseif svd_func == ITensorNetworks.rsvd_iterative
-      
       U, S, V = svd_func(
         envMap,
         uniqueinds(inds(cout), outinds);
@@ -168,7 +165,7 @@ function _two_site_expand_core(
         use_relative_cutoff=false,
         use_absolute_cutoff=true,
       )
-      
+
       #U,S,V = svd_func(contract(envMap),uniqueinds(inds(cout),outinds);maxdim=maxdim-old_linkdim, cutoff=cutoff, use_relative_cutoff=false,
       #use_absolute_cutoff=true) #this one is for debugging in case we want to test the precontracted version
     else
@@ -195,7 +192,7 @@ function _two_site_expand_core(
   #@show inds(U)
   #@show inds(V)
   #@show inds(S)
-  
+
   # direct sum the site tensors
   @timeit_debug timer "direct sum" begin
     new_psis = map(zip(psis, [U, V])) do (psi, exp_basis)
