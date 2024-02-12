@@ -1,19 +1,28 @@
-function get_column_space(A::Vector{<:ITensor}, lc::Index,rc::Index)
+function get_column_space(A::Vector{<:ITensor}, lc::ITensors.QNIndex, rc::ITensors.QNIndex)
   #gets non-zero blocks in rc by sticking in lc and contracting through
-  viable_sectors=Vector{Pair{QN,Int64}}()
+  viable_sectors = Vector{Pair{QN,Int64}}()
   for s in space(lc)
     qn = first(s)
-    trial=dag(randomITensor(qn,lc))
-    adtrial=foldl(*,A;init=trial)
-    nnzblocks(adtrial)==0 && continue
-    @assert nnzblocks(adtrial)==1
+    trial = dag(randomITensor(qn, lc))
+    adtrial = foldl(*, A; init=trial)
+    nnzblocks(adtrial) == 0 && continue
+    @assert nnzblocks(adtrial) == 1
     i = Int(nzblocks(adtrial)[1])
-    thesector=space(only(inds(adtrial)))[i]
+    thesector = space(only(inds(adtrial)))[i]
     push!(viable_sectors, thesector)
   end
   return viable_sectors
 end
 
+function get_column_space(A::Vector{<:ITensor}, lc::Index{Int64}, rc::Index{Int64})
+  #gets non-zero blocks in rc by sticking in lc and contracting through
+  viable_sectors = Vector{Pair{Int64,Int64}}()
+  !any(isempty.(A)) && (viable_sectors = [dim(rc) => dim(rc)])
+  return viable_sectors
+end
+
+# remove since code passes through vector of ITensors
+#=
 function get_column_space(A::ITensor, lc::Index,rc::Index)
   #gets non-zero blocks in rc by sticking in lc and contracting through
   viable_sectors=Vector{Pair{QN,Int64}}()
@@ -26,42 +35,7 @@ function get_column_space(A::ITensor, lc::Index,rc::Index)
   end
   return viable_sectors
 end
-
-
-
-
-function build_guess_matrix(
-    eltype::Type{<:Number}, ind, sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, n::Int, p::Int
-    )
-    if hasqns(ind)
-        aux_spaces = Pair{QN,Int64}[]
-        for s in sectors
-            thedim = last(s)
-            qn = first(s)
-            en = min(n + p, thedim)
-            push!(aux_spaces, Pair(qn, en))
-        end
-        aux_ind = Index(aux_spaces; dir=dir(ind))
-        try
-            M = randomITensor(eltype, dag(ind), aux_ind)    #defaults to zero flux
-           # @show theflux, flux(M)
-        catch e
-            @show e
-            @show aux_ind
-            @show ind
-            error("stopping here something is wrong")
-        end
-        @assert nnzblocks(M) != 0
-    else
-        thedim = dim(ind)
-        en = min(n + p, thedim)
-        #ep = max(0,en-n)
-        aux_ind = Index(en)
-        M = randomITensor(eltype, ind, aux_ind)
-    end
-    #@show M
-    return M
-end
+=#
 
 qns(t::ITensor) = qns(collect(eachnzblock(t)), t)
 qns(t::ITensor, i::Int) = qns(collect(eachnzblock(t)), t, i)
@@ -70,10 +44,9 @@ function qns(bs::Vector{Block{n}}, t::ITensor) where {n}
   return [qns(b, t) for b in bs]
 end
 
-function qns(bs::Vector{Block{n}}, t::ITensor,i::Int) where {n}
+function qns(bs::Vector{Block{n}}, t::ITensor, i::Int) where {n}
   return [qns(b, t)[i] for b in bs]
 end
-
 
 function qns(b::Block{n}, t::ITensor) where {n}
   theqns = QN[]
@@ -85,62 +58,84 @@ function qns(b::Block{n}, t::ITensor) where {n}
   return theqns
 end
 
+#QN version
 function build_guess_matrix(
-  eltype::Type{<:Number}, ind,  sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, ndict::Dict;) ##given ndict, sectors is not necessary here
-  if hasqns(ind)
-    #translate_qns = get_qn_dict(ind, theflux; auxdir)
-    aux_spaces = Pair{QN,Int64}[]
-    #@show first.(space(ind))
-    #@show sectors
-    for s in sectors
-      thedim = last(s)
-      qn = first(s)
-      en = min(ndict[qn], thedim)
-      push!(aux_spaces, Pair(qn, en))
-    end
-    aux_ind = Index(aux_spaces; dir=dir(ind))
-    #M=randomITensor(eltype,-theflux,dag(ind),aux_ind)
-    #@show aux_ind
-    try
-      M = randomITensor(eltype, dag(ind), aux_ind)
-    catch e
-      @show e
-      @show aux_ind
-      @show ind
-      error("stopping here something is wrong")
-    end
-    #@show M
-    #@show M.tensor.storage
-    @assert nnzblocks(M) != 0
-  else
-    thedim = dim(ind)
-    en = min(ndict[space(ind)], thedim)
-    aux_ind = Index(en)
-    M = randomITensor(eltype, ind, aux_ind)
+  eltype::Type{<:Number}, ind, sectors::Vector{Pair{QN,Int64}}, n::Int, p::Int
+)
+  aux_spaces = Pair{QN,Int64}[]
+  for s in sectors
+    thedim = last(s)
+    qn = first(s)
+    en = min(n + p, thedim)
+    push!(aux_spaces, Pair(qn, en))
   end
+  aux_ind = Index(aux_spaces; dir=dir(ind))
+  M = randomITensor(eltype, dag(ind), aux_ind)    #defaults to zero flux
+  @assert nnzblocks(M) != 0
   return M
 end
 
-function init_guess_sizes(cind, sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, n::Int, rule)
-  if hasqns(cind)
-    ndict = Dict{QN,Int64}()
-    for s in sectors
-      thedim = last(s)
-      qn = first(s)
-      ndict[qn] = min(rule(n), thedim)
-    end
-  else
-    @assert sectors==nothing
-    thedim = dim(cind)
-    ndict = Dict{Int64,Int64}()
-    ndict[thedim] = min(thedim, rule(n))
+#non-QN version
+function build_guess_matrix(
+  eltype::Type{<:Number}, ind, sectors::Vector{Pair{Int,Int64}}, n::Int, p::Int
+)
+  thedim = dim(ind)
+  en = min(n + p, thedim)
+  aux_ind = Index(en)
+  M = randomITensor(eltype, ind, aux_ind)
+  return M
+end
+
+#non-QN version
+function build_guess_matrix(
+  eltype::Type{<:Number}, ind, sectors::Vector{Pair{Int,Int}}, ndict::Dict;
+) ##given ndict, sectors is not necessary here
+  thedim = dim(ind)
+  en = min(ndict[space(ind)], thedim)
+  aux_ind = Index(en)
+  M = randomITensor(eltype, ind, aux_ind)
+  return M
+end
+
+#QN version
+function build_guess_matrix(
+  eltype::Type{<:Number}, ind, sectors::Vector{Pair{QN,Int64}}, ndict::Dict;
+) ##given ndict, sectors is not necessary here
+  aux_spaces = Pair{QN,Int64}[]
+  for s in sectors
+    thedim = last(s)
+    qn = first(s)
+    en = min(ndict[qn], thedim)
+    push!(aux_spaces, Pair(qn, en))
+  end
+  aux_ind = Index(aux_spaces; dir=dir(ind))
+  M = randomITensor(eltype, dag(ind), aux_ind)
+  @assert nnzblocks(M) != 0
+  return M
+end
+
+# non-QN version
+function init_guess_sizes(cind, sectors::Nothing, n::Int, rule)
+  thedim = dim(cind)
+  ndict = Dict{Int64,Int64}()
+  ndict[thedim] = min(thedim, rule(n))
+  return ndict
+end
+
+# QN version
+function init_guess_sizes(cind, sectors::Vector{Pair{QN,Int64}}, n::Int, rule)
+  @assert hasqns(cind)
+  ndict = Dict{QN,Int64}()
+  for s in sectors
+    thedim = last(s)
+    qn = first(s)
+    ndict[qn] = min(rule(n), thedim)
   end
   return ndict
 end
 
 function increment_guess_sizes(ndict::Dict{QN,Int64}, n_inc::Int, rule)
   for key in keys(ndict)
-    #thedim=last(key)
     ndict[key] = ndict[key] + rule(n_inc)
   end
   return ndict
@@ -148,7 +143,6 @@ end
 
 function increment_guess_sizes(ndict::Dict{Int64,Int64}, n_inc::Int, rule)
   for key in keys(ndict)
-    #thedim=key
     ndict[key] = ndict[key] + rule(n_inc)
   end
   return ndict
@@ -174,20 +168,19 @@ function is_converged_block(o, n; svd_kwargs...)
 end
 
 function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwargs...)
-  oU,oS,oV = old_fact.U, old_fact.S, old_fact.V
-  nU,nS,nV = new_fact.U, new_fact.S, new_fact.V
-  
+  oU, oS, oV = old_fact.U, old_fact.S, old_fact.V
+  nU, nS, nV = new_fact.U, new_fact.S, new_fact.V
+
   # check for non-existing tensor
   (isempty(nS) && isempty(oS)) && return true
   (isempty(nS) && !(isempty(oS))) && warning("New randomized SVD is empty
   while prior iteration was not. It is very unlikely that this is correct.
   Exiting.")
-  
+
   theflux = flux(nS)
   oldflux = flux(oS)
 
   if !has_qns
-    ###not entirely sure if this is legal for empty factorization
     if norm(oS) == 0.0
       if norm(nS) == 0.0
         return true
@@ -220,17 +213,17 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
   conv_bool_total = true
 
   # deal with QN tensors now
-  ncrind=commonind(nS,nV)
-  ocrind=commonind(oS,oV)
-  n_ind_loc=only(findall(isequal(ncrind),inds(nS)))
-  nqns=first.(space(ncrind))
-  oqns=first.(space(ocrind))
-  
+  ncrind = commonind(nS, nV)
+  ocrind = commonind(oS, oV)
+  n_ind_loc = only(findall(isequal(ncrind), inds(nS)))
+  nqns = first.(space(ncrind))
+  oqns = first.(space(ocrind))
+
   for qn in keys(ndict)
-    if !(qn in nqns) &&  !(qn in oqns)
-      conv_bool=true
+    if !(qn in nqns) && !(qn in oqns)
+      conv_bool = true
       continue
-    #qn
+      #qn
     elseif !(qn in nqns)
       ndict[qn] *= 2
       conv_bool_total = false
@@ -242,8 +235,8 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
       continue
     end
     #qn present in both old and new factorization, grab singular values to compare
-    ovals=get_qnblock_vals(qn,ocrind,oS)
-    nvals=get_qnblock_vals(qn,ncrind,nS)
+    ovals = get_qnblock_vals(qn, ocrind, oS)
+    nvals = get_qnblock_vals(qn, ncrind, nS)
     conv_bool = is_converged_block(collect(ovals), collect(nvals); svd_kwargs...)
     if conv_bool == false
       ndict[qn] *= 2
@@ -264,21 +257,20 @@ end
 
 """Extracts (singular) values in block associated with `qn` in `ind`` from diagonal ITensor `svalt``."""
 function get_qnblock_vals(qn, ind, svalt)
-
-  s=space(ind)
-  ind_loc=only(findall(isequal(ind),inds(svalt)))
+  s = space(ind)
+  ind_loc = only(findall(isequal(ind), inds(svalt)))
   theblocks = eachnzblock(svalt)
   blockdict = Int.(getindex.(theblocks, ind_loc))
   qnindtoblock = Dict(collect(values(blockdict)) .=> collect(keys(blockdict))) #refactor
-  
+
   qnind = findfirst((first.(s)) .== [qn]) # refactor
   theblock = qnindtoblock[qnind]
-  vals=diag(svalt[theblock])
-  
+  vals = diag(svalt[theblock])
+
   return vals
 end
 
 """Check that the factorization isn't empty. / both empty"""
 function _sanity_checks()
-  return
+  return nothing
 end
