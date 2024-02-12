@@ -1,3 +1,4 @@
+
 function rsvd_iterative(A::ITensor, linds::Vector{<:Index}; svd_kwargs...)
     rinds = uniqueinds(A, linds)
     CL = combiner(linds)
@@ -8,20 +9,21 @@ function rsvd_iterative(A::ITensor, linds::Vector{<:Index}; svd_kwargs...)
     if inds(AC) != (cL, cR)
       AC = permute(AC, cL, cR)
     end
-    n_init = 1
-    p_rule(n) = 2 * n
     iszero(norm(AC)) && return nothing, nothing, nothing
-    #@show flux(AC)
     nonzero_sectors=get_column_space(AC,cL,cR)
     isempty(nonzero_sectors) && return nothing,nothing,nothing
-    ndict = init_guess_sizes(cR, nonzero_sectors, n_init, p_rule; theflux=hasqns(AC) ? flux(AC) : nothing)
-    #ndict = init_guess_sizes(cL, n_init, p_rule; theflux=hasqns(AC) ? flux(AC) : nothing)
-    #ndict = merge(ndict, ndict2)
+    
+    # initial iteration
+    n_init = 1
+    p_rule(n) = 2 * n
+    ndict = init_guess_sizes(cR, nonzero_sectors, n_init, p_rule)
     M = build_guess_matrix(eltype(AC), cR, nonzero_sectors, ndict)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
     n_inc = 1
     ndict = increment_guess_sizes(ndict, n_inc, p_rule)
     new_fact = deepcopy(fact)
+    
+    # iterate until convergence
     while true
       M = build_guess_matrix(eltype(AC), cR, nonzero_sectors, ndict)
       new_fact, Q = rsvd_core(AC, M; svd_kwargs...)
@@ -32,15 +34,10 @@ function rsvd_iterative(A::ITensor, linds::Vector{<:Index}; svd_kwargs...)
       end
     end
     vals = diag(array(new_fact.S))
+    # check again for empty factorization
     (length(vals) == 1 && vals[1]^2 ≤ get(svd_kwargs, :cutoff, 0.0)) &&
       return nothing, nothing, nothing
-    #@show flux(dag(CL)*Q*new_fact.U)
-    #@show flux(new_fact.S)\
-    
-    @assert flux(new_fact.S) == flux(AC)
     return dag(CL) * Q * new_fact.U, new_fact.S, new_fact.V * dag(CR)
-    #ToDo?: handle non-QN case separately because there it is advisable to start with n_init closer to target maxdim_expand
-    ##not really an issue anymore since we do *2 increase, so only log number of calls
   end
 
   function rsvd_iterative(A::Vector{ITensor}, linds::Vector{<:Index}; svd_kwargs...)
@@ -56,15 +53,15 @@ function rsvd_iterative(A::ITensor, linds::Vector{<:Index}; svd_kwargs...)
     AC[end] = last(AC)*CR
     cL = combinedind(CL)
     cR = combinedind(CR)
-    theflux = any(hasqns.(AC)) ? reduce(+,flux.(AC)) : nothing
-    #@show theflux
-    n_init = 1
-    p_rule(n) = 2 * n
-    iszero(norm(AC)) && return nothing, nothing, nothing
-    #@show flux(AC)
+    
+    # some checks for empty factorization
+    #iszero(norm(AC)) && return nothing, nothing, nothing
     nonzero_sectors=get_column_space(AC,cL,cR)
     isempty(nonzero_sectors) && return nothing,nothing,nothing
-    ndict = init_guess_sizes(cR, nonzero_sectors, n_init, p_rule; theflux)
+    
+    n_init = 1
+    p_rule(n) = 2 * n
+    ndict = init_guess_sizes(cR, nonzero_sectors, n_init, p_rule)
     
     M = build_guess_matrix(eltype(first(AC)), cR, nonzero_sectors, ndict)
     fact, Q = rsvd_core(AC, M; svd_kwargs...)
@@ -84,19 +81,7 @@ function rsvd_iterative(A::ITensor, linds::Vector{<:Index}; svd_kwargs...)
     vals = diag(array(new_fact.S))
     (length(vals) == 1 && vals[1]^2 ≤ get(svd_kwargs, :cutoff, 0.0)) &&
       return nothing, nothing, nothing
-    #@show flux(dag(CL)*Q*new_fact.U)
-    #@show flux(new_fact.S), theflux
-    #@assert flux(new_fact.S) == theflux
-    #@show inds(new_fact.U)
-    #@show inds(Q)
-    #@show inds(dag(CL))
-    #@show inds(new_fact.S)
-    #@show inds(new_fact.V)
-    #@show inds(dag(CR))
-    
     return dag(CL) * Q * new_fact.U, new_fact.S, new_fact.V * dag(CR)
-    #ToDo?: handle non-QN case separately because there it is advisable to start with n_init closer to target maxdim_expand
-    ##not really an issue anymore since we do *2 increase, so only log number of calls
   end
 
   

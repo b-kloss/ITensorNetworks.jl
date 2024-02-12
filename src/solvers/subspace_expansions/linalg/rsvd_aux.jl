@@ -121,7 +121,7 @@ function build_guess_matrix(
   return M
 end
 
-function init_guess_sizes(cind, sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, n::Int, rule; theflux=nothing, auxdir=dir(cind))
+function init_guess_sizes(cind, sectors::Union{Nothing,Vector{Pair{QN,Int64}}}, n::Int, rule)
   if hasqns(cind)
     ndict = Dict{QN,Int64}()
     for s in sectors
@@ -174,40 +174,32 @@ function is_converged_block(o, n; svd_kwargs...)
 end
 
 function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwargs...)
-  oS = old_fact.S
-  nS = new_fact.S
+  oU,oS,oV = old_fact.U, old_fact.S, old_fact.V
+  nU,nS,nV = new_fact.U, new_fact.S, new_fact.V
+  
+  # check for non-existing tensor
+  (isempty(nS) && isempty(oS)) && return true
+  (isempty(nS) && !(isempty(oS))) && warning("New randomized SVD is empty
+  while prior iteration was not. It is very unlikely that this is correct.
+  Exiting.")
+  
   theflux = flux(nS)
   oldflux = flux(oS)
-  if has_qns
-    if oldflux == nothing || theflux == nothing
-      if norm(oS) == 0.0 && norm(nS) == 0.0
-        return true
-      else
-        return false
-      end
-    else
-      try
-        @assert theflux == flux(oS)
-      catch e
-        @show e
-        @show theflux
-        @show oldflux
-        error("Somehow the fluxes are not matching here! Exiting")
-      end
-    end
-  else
+
+  if !has_qns
     ###not entirely sure if this is legal for empty factorization
     if norm(oS) == 0.0
       if norm(nS) == 0.0
         return true
       else
+        ndict[first(keys(ndict))] *= 2
         return false
       end
     end
   end
 
   maxdim = get(svd_kwargs, :maxdim, Inf)
-  ##deal with non QN tensors first
+  # deal with non QN tensors first and a simple case for blocksparse
   os = sort(storage(oS); rev=true)
   ns = sort(storage(nS); rev=true)
   if length(os) >= maxdim && length(ns) >= maxdim
@@ -216,7 +208,7 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
     conv_global = false
   else
     r = length(ns)
-    conv_global = approx_the_same(os[1:r], ns[1:r])
+    conv_global = approx_the_same(os[1:r], ns[1:r]) #shouldn't this error for os shorter than ns?
   end
   if !hasqns(oS)
     if conv_global == false
@@ -226,21 +218,14 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
     return conv_global
   end
   conv_bool_total = true
-  ##deal with QN tensors second
-  ##a lot of this would be more convenient with ITensor internal_inds_space
-  ##ToDo: refactor, but not entirely trivial because functionality is implemented on the level of QNIndex, not a set of QNIndices
-  ##e.g. it is cumbersome to query the collection of QNs associated with a Block{n} of an ITensor with n>1
-  
-  oU,oV = old_fact.U, old_fact.V
-  nU,nV = new_fact.U, new_fact.V
-  nrind=uniqueind(nV,nS)
-  orind=uniqueind(oV,oS)
-  
+
+  # deal with QN tensors now
   ncrind=commonind(nS,nV)
   ocrind=commonind(oS,oV)
-  
+  n_ind_loc=only(findall(isequal(ncrind),inds(nS)))
   nqns=first.(space(ncrind))
   oqns=first.(space(ocrind))
+  
   for qn in keys(ndict)
     if !(qn in nqns) &&  !(qn in oqns)
       conv_bool=true
@@ -257,33 +242,8 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
       continue
     end
     #qn present in both old and new factorization, grab singular values to compare
-    #since U and V are isometries, we can look for the same QN in the central index
-    #in fact that's not how the svd returns, the outer index is full (all allowed )
-    soS=space(ocrind)
-    snS=space(ncrind)
-    
-  #soS = space(inds(oS)[1])
-  #snS = space(inds(nS)[1])
-  #qns = union(ITensors.qn.(soS), ITensors.qn.(snS))
-
-    oblocks = eachnzblock(oS)
-    oblockdict = Int.(getindex.(oblocks, 1))
-    oqnindtoblock = Dict(collect(values(oblockdict)) .=> collect(keys(oblockdict)))
-
-    nblocks = eachnzblock(nS)
-    nblockdict = Int.(getindex.(nblocks, 1))
-    nqnindtoblock = Dict(collect(values(nblockdict)) .=> collect(keys(nblockdict)))
-    #@show qn, soS, snS
-    #@show (first.(soS)) .== [qn]
-    #@show (first.(snS)) .== (qn,)
-    #@show nqns, oqns    
-
-    oqnind = findfirst((first.(soS)) .== [qn])
-    nqnind = findfirst((first.(snS)) .== [qn])
-    oblock = oqnindtoblock[oqnind]
-    nblock = nqnindtoblock[nqnind]
-    ovals = diag(oS[oblock])
-    nvals = diag(nS[nblock])
+    ovals=get_qnblock_vals(qn,ocrind,oS)
+    nvals=get_qnblock_vals(qn,ncrind,nS)
     conv_bool = is_converged_block(collect(ovals), collect(nvals); svd_kwargs...)
     if conv_bool == false
       ndict[qn] *= 2
@@ -302,5 +262,23 @@ function is_converged!(ndict, old_fact, new_fact; n_inc=1, has_qns=true, svd_kwa
   return conv_bool_total::Bool
 end
 
+"""Extracts (singular) values in block associated with `qn` in `ind`` from diagonal ITensor `svalt``."""
+function get_qnblock_vals(qn, ind, svalt)
 
+  s=space(ind)
+  ind_loc=only(findall(isequal(ind),inds(svalt)))
+  theblocks = eachnzblock(svalt)
+  blockdict = Int.(getindex.(theblocks, ind_loc))
+  qnindtoblock = Dict(collect(values(blockdict)) .=> collect(keys(blockdict))) #refactor
+  
+  qnind = findfirst((first.(s)) .== [qn]) # refactor
+  theblock = qnindtoblock[qnind]
+  vals=diag(svalt[theblock])
+  
+  return vals
+end
 
+"""Check that the factorization isn't empty. / both empty"""
+function _sanity_checks()
+  return
+end
