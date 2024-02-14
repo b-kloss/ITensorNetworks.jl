@@ -65,7 +65,7 @@ ITensors.enable_auto_fermion()
     N = 20
     D = 128
     t = 1.0
-    tp = 0.4
+    tp = 0.0
     dt = 0.025
     s = siteinds("Fermion", N; conserve_qns=true)
     os = ITensorNetworks.tight_binding(N; t, tp)
